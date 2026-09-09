@@ -155,7 +155,7 @@ public class VoskStreamTranscriber {
         this.context = context.getApplicationContext();
         this.sampleRate = transcriptManager.sampleRate;
         this.mainHandler = new Handler(Looper.getMainLooper());
-        this.audioQueue = new LinkedBlockingQueue<>();
+        this.audioQueue = new ArrayBlockingQueue<>(8);
         this.running = new AtomicBoolean(false);
         try {
             //speakerChange = new SpeakerChangeDetector(context);
@@ -329,7 +329,10 @@ public class VoskStreamTranscriber {
             speakerChange = null;
         }
 
-        audioQueue.offer(chunk);
+        if (!audioQueue.offer(chunk)) {
+    audioQueue.poll();
+    audioQueue.offer(chunk);
+}
     }
 
 
