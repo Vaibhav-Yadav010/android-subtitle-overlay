@@ -268,15 +268,25 @@ public class MainPipeline {
             return;
         }
         SharedPreferences prefs = cxt.getSharedPreferences("subrima_prefs", Context.MODE_PRIVATE);
-        sourceLang   = prefs.getString("pref_source_lang",   "auto");
-        if(!sourceLang.equals("auto")&&!sourceLang.equals(srcLang)) {
-            srcLang = sourceLang;
-        }
-        if(!subtitleLang.equals(prefs.getString("pref_subtitle_lang", "en"))) {
-            if(!setLanguage(prefs.getString("pref_subtitle_lang", "en"))) {
-                notifyError("problem changing subtitles lang...");
-            }
-        }
+        sourceLang = prefs.getString("pref_source_lang", "auto");
+
+String selectedSubtitleLang =
+        prefs.getString("pref_subtitle_lang", "en");
+
+boolean sourceChanged = false;
+
+if (!sourceLang.equals("auto") && !sourceLang.equals(srcLang)) {
+    srcLang = sourceLang;
+    sourceChanged = true;
+}
+
+boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
+
+if (sourceChanged || targetChanged) {
+    if (!setLanguage(selectedSubtitleLang)) {
+        notifyError("problem changing translation languages...");
+    }
+}
         transcriber.setParmeters();
     }
 
