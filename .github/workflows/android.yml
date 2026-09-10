@@ -66,4 +66,4 @@ jobs:
             git push
           fi
 
-# Temporary trigger; fix-latency.yml performs the verified one-shot patch.
+# Temporary trigger; fix-latency.yml performs the final one-shot patch.
