@@ -11,19 +11,19 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="32dp">
 
+        <!-- Brand header -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#E8DAFF"
             android:gravity="center_vertical"
-            android:minHeight="92dp"
-            android:orientation="horizontal"
-            android:paddingStart="24dp"
-            android:paddingTop="16dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="16dp">
+            android:minHeight="64dp"
+            android:orientation="horizontal">
 
             <ImageView
                 android:layout_width="52dp"
@@ -40,20 +40,22 @@
                 android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/titleImage"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="CaptionX"
                     android:textColor="#25104D"
-                    android:textSize="25sp"
+                    android:textSize="27sp"
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/subtitleTagline"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="Live translated captions"
-                    android:textColor="#65547B"
-                    android:textSize="13sp" />
+                    android:text="Understand every conversation"
+                    android:textColor="#66577B"
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <ImageButton
@@ -64,17 +66,17 @@
                 android:contentDescription="@string/settings_title"
                 android:padding="12dp"
                 android:src="@drawable/baseline_settings_24"
-                android:tint="#3D3150" />
+                android:tint="#30214D" />
         </LinearLayout>
 
+        <!-- Hero -->
         <LinearLayout
+            android:id="@+id/statusCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="24dp"
-            android:layout_marginTop="20dp"
-            android:layout_marginEnd="24dp"
+            android:layout_marginTop="18dp"
             android:background="@drawable/bg_captionx_card"
-            android:backgroundTint="#EEE9F3"
+            android:backgroundTint="#F0E9FF"
             android:orientation="vertical"
             android:padding="20dp">
 
@@ -84,229 +86,404 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <View
-                    android:layout_width="11dp"
-                    android:layout_height="11dp"
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Live Caption &amp; Translation"
+                        android:textColor="#25104D"
+                        android:textSize="22sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:text="Real-time subtitles for any audio"
+                        android:textColor="#6A5A82"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:background="@drawable/bg_captionx_status"
-                    android:backgroundTint="#6D4DB3" />
+                    android:backgroundTint="#DDF6E8"
+                    android:paddingStart="10dp"
+                    android:paddingTop="6dp"
+                    android:paddingEnd="10dp"
+                    android:paddingBottom="6dp"
+                    android:text="● Ready"
+                    android:textColor="#159447"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="⚡  Transcribe speech"
+                        android:textColor="#51446B"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="9dp"
+                        android:text="文  Translate in real time"
+                        android:textColor="#51446B"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="9dp"
+                        android:text="▰  Show as overlay"
+                        android:textColor="#51446B"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="118dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <ImageButton
+                        android:id="@+id/toggleMainButton"
+                        android:layout_width="92dp"
+                        android:layout_height="92dp"
+                        android:adjustViewBounds="true"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="@string/power"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/turn_on" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:text="Start Captioning"
+                        android:textColor="#25104D"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Quick setup -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_captionx_card"
+            android:backgroundTint="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="10dp"
                     android:layout_weight="1"
-                    android:text="Caption engine"
-                    android:textColor="#292332"
-                    android:textSize="16sp"
+                    android:text="⚙  Quick Setup"
+                    android:textColor="#25104D"
+                    android:textSize="18sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="@drawable/bg_captionx_status"
-                    android:backgroundTint="#E1D4F7"
-                    android:paddingStart="10dp"
-                    android:paddingTop="5dp"
-                    android:paddingEnd="10dp"
-                    android:paddingBottom="5dp"
-                    android:text="READY"
-                    android:textColor="#5F4398"
-                    android:textSize="10sp"
+                    android:text="2/2 ready"
+                    android:textColor="#159447"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
             </LinearLayout>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="7dp"
-                android:text="Your subtitle engine is ready to start."
-                android:textColor="#746B7D"
-                android:textSize="13sp" />
-
-            <ImageButton
-                android:id="@+id/toggleMainButton"
-                android:layout_width="124dp"
-                android:layout_height="124dp"
-                android:layout_gravity="center_horizontal"
-                android:layout_marginTop="12dp"
-                android:adjustViewBounds="true"
-                android:background="@android:color/transparent"
-                android:contentDescription="@string/power"
-                android:scaleType="fitCenter"
-                android:src="@drawable/turn_on" />
-
-            <TextView
-                android:id="@+id/actionHint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:gravity="center"
-                android:text="Tap to start translated captions"
-                android:textColor="#5F4398"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/privacyHint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="5dp"
-                android:gravity="center"
-                android:text="Audio is processed on-device"
-                android:textColor="#81788A"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="28dp"
-            android:layout_marginTop="24dp"
-            android:text="QUICK SETUP"
-            android:textColor="#6D4DB3"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.12" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="24dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="24dp"
-            android:background="@drawable/bg_captionx_card"
-            android:backgroundTint="#EEE9F3"
-            android:orientation="vertical"
-            android:padding="20dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Permissions"
-                android:textColor="#5F4398"
-                android:textSize="16sp"
-                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="@drawable/bg_captionx_status"
-                    android:backgroundTint="#6D4DB3"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#F7F3FF"
+                    android:padding="14dp"
+                    android:text="🎙  Microphone\n      ✓ Ready"
+                    android:textColor="#332A42"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#F7F3FF"
+                    android:padding="14dp"
+                    android:text="▰  Overlay\n      ✓ Ready"
+                    android:textColor="#332A42"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Audio source -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_captionx_card"
+            android:backgroundTint="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔊  Audio Source"
+                android:textColor="#25104D"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#EEE5FF"
                     android:gravity="center"
-                    android:text="✓"
-                    android:textColor="#FFFFFF"
-                    android:textSize="17sp"
+                    android:padding="13dp"
+                    android:text="🎙  Microphone"
+                    android:textColor="#3D246F"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
-                    android:text="Microphone"
-                    android:textColor="#302A36"
-                    android:textSize="15sp" />
+                    android:layout_marginStart="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#F7F3FF"
+                    android:gravity="center"
+                    android:padding="13dp"
+                    android:text="▣  System Audio"
+                    android:textColor="#332A42"
+                    android:textSize="13sp" />
             </LinearLayout>
 
-            <LinearLayout
+            <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:gravity="center_vertical"
+                android:text="Captures audio from videos and apps that allow playback capture."
+                android:textColor="#756A80"
+                android:textSize="12sp"
+                android:lineSpacingExtra="2dp" />
+        </LinearLayout>
+
+        <!-- Transcription -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_captionx_card"
+            android:backgroundTint="#FFFFFF"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▥  Transcription Engine"
+                android:textColor="#25104D"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:background="@drawable/bg_captionx_status"
-                    android:backgroundTint="#6D4DB3"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#F7F3FF"
                     android:gravity="center"
-                    android:text="✓"
-                    android:textColor="#FFFFFF"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
+                    android:padding="13dp"
+                    android:text="☁  Remote Whisper"
+                    android:textColor="#332A42"
+                    android:textSize="13sp" />
 
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
-                    android:text="Overlay"
-                    android:textColor="#302A36"
-                    android:textSize="15sp" />
+                    android:layout_marginStart="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_captionx_card"
+                    android:backgroundTint="#EEE5FF"
+                    android:gravity="center"
+                    android:padding="13dp"
+                    android:text="▣  Local Vosk"
+                    android:textColor="#3D246F"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="Grant both permissions once, then CaptionX can display translated subtitles over other apps."
-                android:textColor="#776E80"
-                android:textSize="13sp"
-                android:lineSpacingExtra="2dp" />
+                android:layout_marginTop="10dp"
+                android:text="Runs transcription fully on this device."
+                android:textColor="#756A80"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="28dp"
-            android:layout_marginTop="24dp"
-            android:text="HOW IT WORKS"
-            android:textColor="#6D4DB3"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.12" />
-
+        <!-- Languages -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="24dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginEnd="24dp"
-            android:layout_marginBottom="28dp"
+            android:layout_marginTop="16dp"
             android:background="@drawable/bg_captionx_card"
-            android:backgroundTint="#EEE9F3"
+            android:backgroundTint="#FFFFFF"
             android:orientation="vertical"
-            android:padding="20dp">
+            android:padding="18dp">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="1   Capture audio"
-                android:textColor="#302A36"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="文  Languages"
+                    android:textColor="#25104D"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⇄  Swap"
+                    android:textColor="#6D4DB3"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="2   Transcribe speech"
-                android:textColor="#302A36"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="3   Translate and show subtitles"
-                android:textColor="#302A36"
-                android:textSize="15sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="14dp"
-                android:text="Built for live captions with privacy-first, on-device processing."
-                android:textColor="#776E80"
-                android:textSize="13sp"
+                android:text="Source (spoken)"
+                android:textColor="#5F5668"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_captionx_card"
+                android:backgroundTint="#F9F6FF"
+                android:padding="14dp"
+                android:text="Spanish (es)                                      ▾"
+                android:textColor="#332A42"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Target (translation)"
+                android:textColor="#5F5668"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_captionx_card"
+                android:backgroundTint="#F9F6FF"
+                android:padding="14dp"
+                android:text="English (en)                                      ▾"
+                android:textColor="#332A42"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="◎  Auto-detect source language                                  OFF"
+                android:textColor="#5F5668"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Privacy -->
+        <LinearLayout
+            android:id="@+id/privacyHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_captionx_card"
+            android:backgroundTint="#F0E9FF"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔒  Privacy first"
+                android:textColor="#25104D"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="7dp"
+                android:text="Audio and captions are processed on-device whenever your selected engine supports it."
+                android:textColor="#665A72"
+                android:textSize="12sp"
                 android:lineSpacingExtra="2dp" />
         </LinearLayout>
 
