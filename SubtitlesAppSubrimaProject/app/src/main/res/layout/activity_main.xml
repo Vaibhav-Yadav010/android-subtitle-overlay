@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FAF7FF"
     android:fillViewport="true"
-    android:overScrollMode="never"
-    tools:context=".MainActivity">
+    android:overScrollMode="never">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -17,7 +15,6 @@
         android:paddingEnd="24dp"
         android:paddingBottom="32dp">
 
-        <!-- Brand header -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -57,19 +54,16 @@
                     android:textColor="#66577B"
                     android:textSize="12sp" />
             </LinearLayout>
-
-            <ImageButton
-                android:id="@+id/settingsButton"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/settings_title"
-                android:padding="12dp"
-                android:src="@drawable/baseline_settings_24"
-                android:tint="#30214D" />
         </LinearLayout>
 
-        <!-- Hero -->
+        <!-- Kept hidden because MainActivity still references this legacy ID. -->
+        <ImageButton
+            android:id="@+id/settingsButton"
+            android:layout_width="1dp"
+            android:layout_height="1dp"
+            android:visibility="gone"
+            android:contentDescription="@string/settings_title" />
+
         <LinearLayout
             android:id="@+id/statusCard"
             android:layout_width="match_parent"
@@ -188,7 +182,6 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Quick setup -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -198,29 +191,13 @@
             android:orientation="vertical"
             android:padding="18dp">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="⚙  Quick Setup"
-                    android:textColor="#25104D"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="2/2 ready"
-                    android:textColor="#159447"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+                android:text="⚙  Quick Setup"
+                android:textColor="#25104D"
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -228,33 +205,38 @@
                 android:layout_marginTop="14dp"
                 android:orientation="horizontal">
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="6dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
                     android:backgroundTint="#F7F3FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:padding="14dp"
-                    android:text="🎙  Microphone\n      ✓ Ready"
+                    android:tag="permission_microphone"
+                    android:text="🎙  Microphone\n      Tap to manage"
                     android:textColor="#332A42"
                     android:textSize="13sp" />
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
                     android:backgroundTint="#F7F3FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:padding="14dp"
-                    android:text="▰  Overlay\n      ✓ Ready"
+                    android:tag="permission_overlay"
+                    android:text="▰  Overlay\n      Tap to manage"
                     android:textColor="#332A42"
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Audio source -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -278,45 +260,49 @@
                 android:layout_marginTop="12dp"
                 android:orientation="horizontal">
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="5dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
-                    android:backgroundTint="#EEE5FF"
+                    android:backgroundTint="#F7F3FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:gravity="center"
                     android:padding="13dp"
+                    android:tag="audio_microphone"
                     android:text="🎙  Microphone"
-                    android:textColor="#3D246F"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:textColor="#332A42"
+                    android:textSize="13sp" />
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="5dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
-                    android:backgroundTint="#F7F3FF"
+                    android:backgroundTint="#EEE5FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:gravity="center"
                     android:padding="13dp"
+                    android:tag="audio_system"
                     android:text="▣  System Audio"
-                    android:textColor="#332A42"
-                    android:textSize="13sp" />
+                    android:textColor="#3D246F"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:text="Captures audio from videos and apps that allow playback capture."
+                android:text="System Audio captures playback from supported videos and apps."
                 android:textColor="#756A80"
-                android:textSize="12sp"
-                android:lineSpacingExtra="2dp" />
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Transcription -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -340,28 +326,34 @@
                 android:layout_marginTop="12dp"
                 android:orientation="horizontal">
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="5dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
                     android:backgroundTint="#F7F3FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:gravity="center"
                     android:padding="13dp"
+                    android:tag="engine_remote"
                     android:text="☁  Remote Whisper"
                     android:textColor="#332A42"
                     android:textSize="13sp" />
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="5dp"
                     android:layout_weight="1"
                     android:background="@drawable/bg_captionx_card"
                     android:backgroundTint="#EEE5FF"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:gravity="center"
                     android:padding="13dp"
+                    android:tag="engine_local"
                     android:text="▣  Local Vosk"
                     android:textColor="#3D246F"
                     android:textSize="13sp"
@@ -372,12 +364,11 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
-                android:text="Runs transcription fully on this device."
+                android:text="Local Vosk is the active transcription engine in this build."
                 android:textColor="#756A80"
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Languages -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -402,9 +393,13 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
-                <TextView
+                <com.example.subtitles.view.CaptionXActionTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:padding="8dp"
+                    android:tag="swap"
                     android:text="⇄  Swap"
                     android:textColor="#6D4DB3"
                     android:textSize="13sp"
@@ -419,14 +414,18 @@
                 android:textColor="#5F5668"
                 android:textSize="12sp" />
 
-            <TextView
+            <com.example.subtitles.view.CaptionXActionTextView
+                android:id="@+id/sourceLanguageButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:background="@drawable/bg_captionx_card"
                 android:backgroundTint="#F9F6FF"
+                android:clickable="true"
+                android:focusable="true"
                 android:padding="14dp"
-                android:text="Spanish (es)                                      ▾"
+                android:tag="source"
+                android:text="Auto"
                 android:textColor="#332A42"
                 android:textSize="14sp" />
 
@@ -438,27 +437,44 @@
                 android:textColor="#5F5668"
                 android:textSize="12sp" />
 
-            <TextView
+            <com.example.subtitles.view.CaptionXActionTextView
+                android:id="@+id/targetLanguageButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:background="@drawable/bg_captionx_card"
                 android:backgroundTint="#F9F6FF"
+                android:clickable="true"
+                android:focusable="true"
                 android:padding="14dp"
-                android:text="English (en)                                      ▾"
+                android:tag="target"
+                android:text="English"
                 android:textColor="#332A42"
                 android:textSize="14sp" />
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:text="◎  Auto-detect source language                                  OFF"
-                android:textColor="#5F5668"
-                android:textSize="12sp" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="◎  Auto-detect source language"
+                    android:textColor="#5F5668"
+                    android:textSize="12sp" />
+
+                <com.example.subtitles.view.CaptionXAutoDetectSwitch
+                    android:id="@+id/autoDetectSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="Auto-detect source language" />
+            </LinearLayout>
         </LinearLayout>
 
-        <!-- Privacy -->
         <LinearLayout
             android:id="@+id/privacyHint"
             android:layout_width="match_parent"
@@ -472,7 +488,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="🔒  Privacy first"
+                android:text="Privacy first"
                 android:textColor="#25104D"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -480,9 +496,9 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="7dp"
-                android:text="Audio and captions are processed on-device whenever your selected engine supports it."
-                android:textColor="#665A72"
+                android:layout_marginTop="6dp"
+                android:text="Audio is processed on-device by the current caption pipeline."
+                android:textColor="#756A80"
                 android:textSize="12sp"
                 android:lineSpacingExtra="2dp" />
         </LinearLayout>
