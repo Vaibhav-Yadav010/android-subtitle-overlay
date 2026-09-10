@@ -51,12 +51,10 @@
         android:layout_height="0dp"
         android:layout_marginTop="20dp"
         android:fillViewport="true"
-        android:overScrollMode="ifContentScrolls"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/settingsSubtitle">
-
         <LinearLayout
             android:id="@+id/llSettingsContainer"
             android:layout_width="match_parent"
@@ -64,19 +62,9 @@
             android:background="@drawable/bg_captionx_card"
             android:orientation="vertical"
             android:padding="4dp">
-
-            <include
-                android:id="@+id/sourceLangRow"
-                layout="@layout/setting_row" />
-
-            <include
-                android:id="@+id/subtitleLangRow"
-                layout="@layout/setting_row" />
-
-            <include
-                android:id="@+id/smartCorrectionRow"
-                layout="@layout/setting_row_toggle" />
+            <include android:id="@+id/sourceLangRow" layout="@layout/setting_row_captionx" />
+            <include android:id="@+id/subtitleLangRow" layout="@layout/setting_row_captionx" />
+            <include android:id="@+id/smartCorrectionRow" layout="@layout/setting_row_toggle_captionx" />
         </LinearLayout>
     </ScrollView>
-
 </androidx.constraintlayout.widget.ConstraintLayout>
