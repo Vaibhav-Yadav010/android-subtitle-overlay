@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="76dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="12dp">
+    <TextView
+        android:id="@+id/tvLabel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/label_place_hold"
+        android:textColor="@color/captionx_text"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+    <Switch
+        android:id="@+id/switchValue"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:thumbTint="@color/colorPrimary"
+        android:trackTint="@color/captionx_surface_alt" />
+    <ImageButton
+        android:id="@+id/btnHelp"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/cd_help"
+        android:padding="10dp"
+        android:src="@drawable/ic_help" />
+</LinearLayout>
