@@ -56,6 +56,23 @@ public class MlKitTranslator implements AutoCloseable {
 
     private final AtomicInteger requestCounter = new AtomicInteger(0); // Tracks latest request ID
 
+    // Keep only the newest transcription update while one ML Kit request is running.
+    private final Object translationQueueLock = new Object();
+    private boolean translationInFlight = false;
+    private PendingTranslation pendingTranslation;
+
+    private static final class PendingTranslation {
+        final String lastSourceSentence;
+        final String text;
+        final TranslationCallback callback;
+
+        PendingTranslation(String lastSourceSentence, String text, TranslationCallback callback) {
+            this.lastSourceSentence = lastSourceSentence;
+            this.text = text;
+            this.callback = callback;
+        }
+    }
+
     // ================================================================
     // Listener for model readiness
     // ================================================================
@@ -283,88 +300,129 @@ public class MlKitTranslator implements AutoCloseable {
      * @param callback Callback for translation results
      */
     public void translate(String lastSourceSentence, @NonNull String text, @NonNull TranslationCallback callback) {
+        synchronized (translationQueueLock) {
+            pendingTranslation = new PendingTranslation(lastSourceSentence, text, callback);
+            if (translationInFlight) {
+                return;
+            }
+            translationInFlight = true;
+        }
+
+        startNextTranslation();
+    }
+
+    private void startNextTranslation() {
+        final PendingTranslation request;
+        synchronized (translationQueueLock) {
+            request = pendingTranslation;
+            pendingTranslation = null;
+            if (request == null) {
+                translationInFlight = false;
+                return;
+            }
+        }
+
         final int myId = requestCounter.incrementAndGet();
         try {
             if (!isReady()) {
-                callback.onError(new TranslationException.NotReady());
+                request.callback.onError(new TranslationException.NotReady());
+                finishTranslation();
                 return;
             }
+
             Log.d(TAG, "*************************************************************************************");
-            Log.d(TAG, "lastSourceSentence: " + lastSourceSentence);
-            Log.d(TAG, "text: " + text);
+            Log.d(TAG, "lastSourceSentence: " + request.lastSourceSentence);
+            Log.d(TAG, "text: " + request.text);
 
-            //String input = lastSourceSentence.isEmpty()
-             //       ? text.trim()
-               //     : lastSourceSentence.trim() + "\n" + text.trim();
-
-            // Build input string combining previous sentence with new text
-            String input = lastSourceSentence.isEmpty()
-                    ? text.trim()
-                    : lastSourceSentence.trim() + "\n" + text.trim();
+            String input = request.lastSourceSentence.isEmpty()
+                    ? request.text.trim()
+                    : request.lastSourceSentence.trim() + "\n" + request.text.trim();
 
             Log.d(TAG, "input: " + input);
-            // Direct translation path
+
             if (!useIntermediate) {
                 directTranslator.translate(input)
                         .addOnSuccessListener(res -> {
-                            if (requestCounter.get() != myId) return;
                             if (requestCounter.get() == myId) {
                                 String onlyNew = extractNewPortion(
                                         res,
-                                        text,
+                                        request.text,
                                         sourceLang,
                                         targetLang
                                 );
-                                callback.onResult(res, onlyNew);
+                                request.callback.onResult(res, onlyNew);
                             }
+                            finishTranslation();
                         })
                         .addOnFailureListener(e -> {
-                            if (requestCounter.get() == myId)
-                                callback.onError(new TranslationException.ServiceError(e));
+                            if (requestCounter.get() == myId) {
+                                request.callback.onError(new TranslationException.ServiceError(e));
+                            }
+                            finishTranslation();
                         });
-
             } else {
-                // Intermediate translation: source->English->target
                 interTranslator.translate(input)
                         .addOnSuccessListener(interRes -> {
-                            if (requestCounter.get() != myId) return;
+                            if (requestCounter.get() != myId) {
+                                finishTranslation();
+                                return;
+                            }
+
                             if (TranslateLanguage.ENGLISH.equals(safeLanguage(targetLang))) {
                                 String onlyNew = extractNewPortion(
                                         interRes,
-                                        text,
+                                        request.text,
                                         sourceLang,
                                         targetLang
                                 );
-                                callback.onResult(interRes, onlyNew);
+                                request.callback.onResult(interRes, onlyNew);
+                                finishTranslation();
                             } else {
                                 directTranslator.translate(interRes)
                                         .addOnSuccessListener(finalRes -> {
                                             if (requestCounter.get() == myId) {
                                                 String onlyNew = extractNewPortion(
                                                         finalRes,
-                                                        text,
+                                                        request.text,
                                                         sourceLang,
                                                         targetLang
                                                 );
-                                                callback.onResult(finalRes, onlyNew);
+                                                request.callback.onResult(finalRes, onlyNew);
                                             }
+                                            finishTranslation();
                                         })
                                         .addOnFailureListener(e2 -> {
-                                            if (requestCounter.get() == myId)
-                                                callback.onError(new TranslationException.ServiceError(e2));
+                                            if (requestCounter.get() == myId) {
+                                                request.callback.onError(new TranslationException.ServiceError(e2));
+                                            }
+                                            finishTranslation();
                                         });
                             }
                         })
                         .addOnFailureListener(e -> {
-                            if (requestCounter.get() == myId)
-                                callback.onError(new TranslationException.ServiceError(e));
+                            if (requestCounter.get() == myId) {
+                                request.callback.onError(new TranslationException.ServiceError(e));
+                            }
+                            finishTranslation();
                         });
             }
         } catch (Exception ex) {
             Log.e(TAG, "Unexpected error in translate()", ex);
-            callback.onError(new TranslationException.ServiceError(ex));
+            request.callback.onError(new TranslationException.ServiceError(ex));
+            finishTranslation();
         }
     }
+
+    private void finishTranslation() {
+        synchronized (translationQueueLock) {
+            if (pendingTranslation == null) {
+                translationInFlight = false;
+                return;
+            }
+        }
+        startNextTranslation();
+    }
+
     // ================================================================
     // Text utility methods (sentence/word splitting)
     // ================================================================
