@@ -334,9 +334,7 @@ public class MlKitTranslator implements AutoCloseable {
             Log.d(TAG, "lastSourceSentence: " + request.lastSourceSentence);
             Log.d(TAG, "text: " + request.text);
 
-            String input = request.lastSourceSentence.isEmpty()
-                    ? request.text.trim()
-                    : request.lastSourceSentence.trim() + "\n" + request.text.trim();
+            String input = request.text.trim();
 
             Log.d(TAG, "input: " + input);
 
@@ -344,13 +342,7 @@ public class MlKitTranslator implements AutoCloseable {
                 directTranslator.translate(input)
                         .addOnSuccessListener(res -> {
                             if (requestCounter.get() == myId) {
-                                String onlyNew = extractNewPortion(
-                                        res,
-                                        request.text,
-                                        sourceLang,
-                                        targetLang
-                                );
-                                request.callback.onResult(res, onlyNew);
+                                request.callback.onResult(res, res);
                             }
                             finishTranslation();
                         })
@@ -369,25 +361,13 @@ public class MlKitTranslator implements AutoCloseable {
                             }
 
                             if (TranslateLanguage.ENGLISH.equals(safeLanguage(targetLang))) {
-                                String onlyNew = extractNewPortion(
-                                        interRes,
-                                        request.text,
-                                        sourceLang,
-                                        targetLang
-                                );
-                                request.callback.onResult(interRes, onlyNew);
+                                request.callback.onResult(interRes, interRes);
                                 finishTranslation();
                             } else {
                                 directTranslator.translate(interRes)
                                         .addOnSuccessListener(finalRes -> {
                                             if (requestCounter.get() == myId) {
-                                                String onlyNew = extractNewPortion(
-                                                        finalRes,
-                                                        request.text,
-                                                        sourceLang,
-                                                        targetLang
-                                                );
-                                                request.callback.onResult(finalRes, onlyNew);
+                                                request.callback.onResult(finalRes, finalRes);
                                             }
                                             finishTranslation();
                                         })

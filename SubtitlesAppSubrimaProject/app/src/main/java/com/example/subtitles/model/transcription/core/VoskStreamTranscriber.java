@@ -320,15 +320,10 @@ public class VoskStreamTranscriber {
     public void acceptAudio(TaggedAudioChunk chunk) {
         if (!running.get() || recognizer == null) return;
 
-        try {
-            if (speakerChange != null && speakerChange.acceptAudio(chunk.getShortAudio())) {
-                chunk.setResetBefore();
-                Log.i(TAG, String.format("🎙 Speaker change → tagged queue chunk (queue size=%d)", audioQueue.size()));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Speaker change detection error", e);
-            speakerChange = null;
-        }
+        // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.
+        // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.
+        // Audio is kept flowing directly into the Vosk queue for low-latency transcription.
+
 
         if (!audioQueue.offer(chunk)) {
     audioQueue.poll();
