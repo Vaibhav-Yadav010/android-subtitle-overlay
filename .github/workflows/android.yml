@@ -2,12 +2,12 @@ name: Android CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "captionx-v2"]
   pull_request:
     branches: ["main"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -38,12 +38,34 @@ jobs:
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x SubtitlesAppSubrimaProject/gradlew
 
-      - name: Build debug APK
+      - name: Reduce live transcription backlog
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java")
+          s = p.read_text()
+          old = "this.audioQueue = new ArrayBlockingQueue<>(8);"
+          new = "this.audioQueue = new ArrayBlockingQueue<>(3);"
+          if old not in s:
+              raise SystemExit("Expected audio queue declaration not found")
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Build CaptionX debug APK
         working-directory: SubtitlesAppSubrimaProject
         run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Upload APK
+      - name: Upload CaptionX APK
         uses: actions/upload-artifact@v4
         with:
-          name: subrima-debug-apk
+          name: captionx-debug-apk
           path: SubtitlesAppSubrimaProject/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Persist latency change on CaptionX branch
+        if: github.ref == 'refs/heads/captionx-v2'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java
+          git diff --cached --quiet || git commit -m "perf: cap live transcription backlog"
+          git push
