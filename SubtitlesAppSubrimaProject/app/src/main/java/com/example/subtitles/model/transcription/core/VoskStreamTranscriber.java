@@ -156,7 +156,7 @@ public class VoskStreamTranscriber {
         this.context = context.getApplicationContext();
         this.sampleRate = transcriptManager.sampleRate;
         this.mainHandler = new Handler(Looper.getMainLooper());
-        this.audioQueue = new ArrayBlockingQueue<>(8);
+        this.audioQueue = new ArrayBlockingQueue<>(3);
         this.running = new AtomicBoolean(false);
         try {
             //speakerChange = new SpeakerChangeDetector(context);
