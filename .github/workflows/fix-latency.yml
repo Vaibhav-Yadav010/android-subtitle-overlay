@@ -51,7 +51,7 @@ jobs:
           replacements = [
               ('''String onlyNew = extractNewPortion(\n                                        res,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(res, onlyNew);''',
                '''request.callback.onResult(res, res);'''),
-              ('''String onlyNew = extractNewPortion(\n                                        interRes,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(interRes, onlyNew);''',
+              ('''String onlyNew = extractNewPortion(\n                                        interRes,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(interRes, interRes);''',
                '''request.callback.onResult(interRes, interRes);'''),
               ('''String onlyNew = extractNewPortion(\n                                                        finalRes,\n                                                        request.text,\n                                                        sourceLang,\n                                                        targetLang\n                                                );\n                                                request.callback.onResult(finalRes, onlyNew);''',
                '''request.callback.onResult(finalRes, finalRes);''')
@@ -131,6 +131,10 @@ jobs:
           rm -f .github/workflows/fix-latency.yml .github/workflows/apply-translation-throttle.yml .github/patch_translation.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java .github/workflows/android.yml .github/workflows/fix-latency.yml .github/workflows/apply-translation-throttle.yml .github/patch_translation.py
-          git commit -m "perf: remove synchronous speaker analysis and simplify incremental translation"
-          git push
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to persist."
+          else
+            git commit -m "perf: remove synchronous speaker analysis and simplify incremental translation"
+            git push
+          fi
