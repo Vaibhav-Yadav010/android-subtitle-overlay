@@ -138,9 +138,7 @@ public class AssetUtils {
     }
 
     private static final RuntimeModel[] REQUIRED_MODELS = new RuntimeModel[]{
-            new RuntimeModel("Silero Language Model", SILERO_MODEL_FILE, SILERO_MODEL_URL),
-            new RuntimeModel("Pyannote Speaker Diarization", PYANNOTE_MODEL_FILE, PYANNOTE_MODEL_URL),
-            new RuntimeModel("Whisper Tiny", WHISPER_TINY_MODEL_FILE, WHISPER_TINY_MODEL_URL)
+            new RuntimeModel("Silero Language Model", SILERO_MODEL_FILE, SILERO_MODEL_URL)
     };
 
     /**
