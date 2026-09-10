@@ -38,16 +38,15 @@ jobs:
           text = text[:start] + replacement + text[end:]
           vosk.write_text(text, encoding="utf-8")
 
-          # The previous incremental translation path translated previous+current
-          # text and then guessed the new portion using source/target word counts.
-          # Word counts do not map between languages, producing truncated nonsense.
+          # Translate only the current Vosk text. The previous implementation
+          # translated previous+current text and then guessed the new portion
+          # using source/target word counts. That is invalid across languages.
           ml = Path("SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java")
           text = ml.read_text(encoding="utf-8")
           old = '''            String input = request.lastSourceSentence.isEmpty()\n                    ? request.text.trim()\n                    : request.lastSourceSentence.trim() + "\\n" + request.text.trim();'''
-          new = '''            String input = request.text.trim();'''
           if old not in text:
               raise SystemExit("Translator input block not found")
-          text = text.replace(old, new, 1)
+          text = text.replace(old, '''            String input = request.text.trim();''', 1)
 
           replacements = [
               ('''String onlyNew = extractNewPortion(\n                                        res,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(res, onlyNew);''',
@@ -63,20 +62,29 @@ jobs:
               text = text.replace(old_call, new_call, 1)
           ml.write_text(text, encoding="utf-8")
 
-          # Permanently restore normal CI: remove the obsolete patch script step.
+          # Restore permanent CI to a normal build-only workflow. Remove both
+          # the obsolete patch step and the old self-cleanup/push step.
           ci = Path(".github/workflows/android.yml")
           ci_text = ci.read_text(encoding="utf-8")
           ci_text = ci_text.replace("permissions:\n  contents: write", "permissions:\n  contents: read", 1)
-          marker = "      - name: Apply translation throttle patch\n"
-          start = ci_text.find(marker)
+
+          apply_marker = "      - name: Apply translation throttle patch\n"
+          start = ci_text.find(apply_marker)
           if start >= 0:
-              end = ci_text.find("      - name:", start + len(marker))
+              end = ci_text.find("      - name:", start + len(apply_marker))
               if end < 0:
-                  raise SystemExit("Could not find next CI step")
+                  raise SystemExit("Could not find next CI step after obsolete patch step")
               ci_text = ci_text[:start] + ci_text[end:]
+
+          persist_marker = "      - name: Persist patch and remove temporary patch files\n"
+          start = ci_text.find(persist_marker)
+          if start >= 0:
+              ci_text = ci_text[:start].rstrip() + "\n"
+
           ci.write_text(ci_text, encoding="utf-8")
 
-          # Validate only the intended semantic changes.
+          # Validate intended source changes and ensure permanent CI contains no
+          # reference to temporary patch scripts.
           assert "String input = request.text.trim();" in text
           assert text.count("private PendingTranslation pendingTranslation;") == 1
           assert text.count("private void startNextTranslation()") == 1
@@ -120,9 +128,9 @@ jobs:
 
       - name: Persist source changes and remove temporary workflows
         run: |
-          rm -f .github/workflows/fix-latency.yml .github/patch_translation.py
+          rm -f .github/workflows/fix-latency.yml .github/workflows/apply-translation-throttle.yml .github/patch_translation.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java .github/workflows/android.yml .github/workflows/fix-latency.yml .github/patch_translation.py
+          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java .github/workflows/android.yml .github/workflows/fix-latency.yml .github/workflows/apply-translation-throttle.yml .github/patch_translation.py
           git commit -m "perf: remove synchronous speaker analysis and simplify incremental translation"
           git push
