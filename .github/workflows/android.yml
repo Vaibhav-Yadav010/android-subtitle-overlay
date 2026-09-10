@@ -65,3 +65,5 @@ jobs:
             git commit -m "perf: throttle translation requests"
             git push
           fi
+
+# Temporary trigger; fix-latency.yml performs the verified one-shot patch.
