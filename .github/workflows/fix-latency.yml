@@ -1,0 +1,124 @@
+name: Fix latency and translation output
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Patch latency bottlenecks
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          # 1) Remove synchronous 1-second ONNX speaker analysis from the
+          # 250 ms audio capture path. It was blocking audio delivery.
+          vosk = Path("SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java")
+          text = vosk.read_text(encoding="utf-8")
+          start_marker = "        try {\n            if (speakerChange != null && speakerChange.acceptAudio(chunk.getShortAudio())) {"
+          end_marker = "\n\n        if (!audioQueue.offer(chunk))"
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("Vosk speaker-analysis block not found")
+          text = text[:start] + "        // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.\n        // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.\n        // Audio is kept flowing directly into the Vosk queue for low-latency transcription.\n" + text[end:]
+          vosk.write_text(text, encoding="utf-8")
+
+          # 2) Translate only the current Vosk text. The previous implementation
+          # translated previous+current text and then guessed the new portion by
+          # matching source/target word counts. That is not valid across languages
+          # and caused truncated/garbled incremental subtitles.
+          ml = Path("SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java")
+          text = ml.read_text(encoding="utf-8")
+          old = '''            String input = request.lastSourceSentence.isEmpty()\n                    ? request.text.trim()\n                    : request.lastSourceSentence.trim() + "\\n" + request.text.trim();'''
+          new = '''            String input = request.text.trim();'''
+          if old not in text:
+              raise SystemExit("Translator input block not found")
+          text = text.replace(old, new, 1)
+
+          old_call = '''String onlyNew = extractNewPortion(\n                                        res,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(res, onlyNew);'''
+          new_call = '''request.callback.onResult(res, res);'''
+          if old_call not in text:
+              raise SystemExit("Direct translation callback block not found")
+          text = text.replace(old_call, new_call, 1)
+
+          old_inter = '''String onlyNew = extractNewPortion(\n                                        interRes,\n                                        request.text,\n                                        sourceLang,\n                                        targetLang\n                                );\n                                request.callback.onResult(interRes, onlyNew);'''
+          new_inter = '''request.callback.onResult(interRes, interRes);'''
+          if old_inter not in text:
+              raise SystemExit("Intermediate translation callback block not found")
+          text = text.replace(old_inter, new_inter, 1)
+
+          old_final = '''String onlyNew = extractNewPortion(\n                                                        finalRes,\n                                                        request.text,\n                                                        sourceLang,\n                                                        targetLang\n                                                );\n                                                request.callback.onResult(finalRes, onlyNew);'''
+          new_final = '''request.callback.onResult(finalRes, finalRes);'''
+          if old_final not in text:
+              raise SystemExit("Final translation callback block not found")
+          text = text.replace(old_final, new_final, 1)
+          ml.write_text(text, encoding="utf-8")
+
+          # 3) Remove the temporary/obsolete patch step from the permanent CI.
+          ci = Path(".github/workflows/android.yml")
+          ci_text = ci.read_text(encoding="utf-8")
+          ci_text = ci_text.replace('permissions:\n  contents: write', 'permissions:\n  contents: read')
+          old_step = '''      - name: Apply translation throttle patch\n        if: github.event_name == 'push'\n        run: python3 .github/patch_translation.py\n\n'''
+          if old_step in ci_text:
+              ci_text = ci_text.replace(old_step, '', 1)
+          ci.write_text(ci_text, encoding="utf-8")
+
+          # Strong structural checks before Gradle sees the source.
+          assert text.count("private PendingTranslation pendingTranslation;") == 1
+          assert text.count("private void startNextTranslation()") == 1
+          assert text.count("private void finishTranslation()") == 1
+          assert "String input = request.text.trim();" in text
+          assert "speakerChange.acceptAudio(chunk.getShortAudio())" not in vosk.read_text(encoding="utf-8")
+          assert "patch_translation.py" not in ci_text
+          print("Latency/translation patch validation passed")
+          PY
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: gradle
+          cache-dependency-path: SubtitlesAppSubrimaProject/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "cmake;3.22.1" \
+            "ndk;26.1.10909125"
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x SubtitlesAppSubrimaProject/gradlew
+
+      - name: Build patched debug APK
+        working-directory: SubtitlesAppSubrimaProject
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Upload patched APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: subrima-low-latency-apk
+          path: SubtitlesAppSubrimaProject/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Persist source changes and remove temporary workflow
+        run: |
+          rm -f .github/workflows/fix-latency.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java .github/workflows/android.yml .github/workflows/fix-latency.yml
+          git commit -m "perf: remove synchronous speaker analysis and simplify incremental translation"
+          git push
