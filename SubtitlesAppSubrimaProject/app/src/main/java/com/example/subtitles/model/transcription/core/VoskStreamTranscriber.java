@@ -344,6 +344,7 @@ public class VoskStreamTranscriber {
         if (!running.getAndSet(false)) {
             return;
         }
+        audioQueue.clear();
         if (workerThread != null) {
             workerThread.interrupt();
             if (Thread.currentThread() != workerThread) {
@@ -360,7 +361,6 @@ public class VoskStreamTranscriber {
         if (speakerChange != null) {
             speakerChange.reset(true);
         }
-        audioQueue.clear();
         lastNotified = "";
         lastNotifiedUnModify = "";
         transcriptSubtitles.setLength(0);
