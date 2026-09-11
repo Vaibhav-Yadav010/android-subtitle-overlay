@@ -144,8 +144,7 @@ public class WhisperTranscriber {
     public synchronized void start() {
         if (running.get()) return;
         if (processingThread != null && processingThread.isAlive()) {
-            Log.w(TAG, "Cannot start Whisper while previous worker is still stopping");
-            return;
+            throw new IllegalStateException("Cannot start Whisper while previous worker is still stopping");
         }
         if (ctx == null) {
             throw new IllegalStateException("WhisperContext is closed");
@@ -163,7 +162,6 @@ public class WhisperTranscriber {
             return;
         }
         isDone = true;
-        resetAll();
         Thread worker = processingThread;
         if (worker != null) {
             worker.interrupt();
@@ -191,6 +189,7 @@ public class WhisperTranscriber {
             } else {
                 Log.i(TAG, " WhisperTranscriber stopped — no transcriptions performed.");
             }
+            resetAll();
 
             if (onStopped != null) {
                 mainHandler.post(onStopped);
@@ -201,9 +200,10 @@ public class WhisperTranscriber {
     public synchronized void close() {
         running.set(false);
         isDone = true;
-        resetAll();
         Thread worker = processingThread;
+        instance = null;
         if (worker == null) {
+            resetAll();
             closeContext();
             return;
         }
@@ -223,6 +223,7 @@ public class WhisperTranscriber {
                     }
                 }
             }
+            resetAll();
             closeContext();
         }, "WhisperCloser").start();
     }
