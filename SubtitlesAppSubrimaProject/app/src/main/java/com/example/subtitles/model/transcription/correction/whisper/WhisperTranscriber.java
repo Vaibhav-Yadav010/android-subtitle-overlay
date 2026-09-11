@@ -43,7 +43,7 @@ public class WhisperTranscriber {
 
     private final BlockingQueue<float[]> audioQueue;
     private Thread processingThread;
-    private WhisperContext ctx = null;
+    private volatile WhisperContext ctx = null;
     private volatile boolean isDone = false;
     private Whisperlistener listener;
     private final Handler mainHandler;
@@ -106,15 +106,16 @@ public class WhisperTranscriber {
     }
 
     private void doTranscribe(int len) {
-        if (ctx == null) return;
+        WhisperContext context = ctx;
+        if (context == null) return;
         float[] toTranscribe = Arrays.copyOf(buffer, len);
         try {
             long start = System.currentTimeMillis();
             Log.i(TAG, " Starting transcription of " + len + " samples...");
-            List<transcriptSegment> segs = ctx.transcribeWithTime(toTranscribe);
+            List<transcriptSegment> segs = context.transcribeWithTime(toTranscribe);
             long duration = System.currentTimeMillis() - start;
             Log.i(TAG, " Transcription completed in " + duration + "ms, " + segs.size() + " segments");
-            if (!segs.isEmpty()) lang = ctx.detectLanguage();
+            if (!segs.isEmpty()) lang = context.detectLanguage();
             sumProcessingTime += duration;
             counterProcessing += 1;
             if (duration / 1000L > CHUNK_SEC) {
@@ -202,27 +203,38 @@ public class WhisperTranscriber {
         isDone = true;
         resetAll();
         Thread worker = processingThread;
-        if (worker != null) {
-            worker.interrupt();
+        if (worker == null) {
+            closeContext();
+            return;
+        }
+
+        worker.interrupt();
+        new Thread(() -> {
             try {
-                if (Thread.currentThread() != worker) {
-                    worker.join();
-                }
+                worker.join();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 Log.e(TAG, "Interrupted while stopping Whisper worker", e);
                 return;
-            }
-            processingThread = null;
-        }
-        if (ctx != null) {
-            try {
-                ctx.close();
-            } catch (Exception e) {
-                Log.e(TAG, "Error closing WhisperContext", e);
             } finally {
-                ctx = null;
+                synchronized (WhisperTranscriber.this) {
+                    if (processingThread == worker) {
+                        processingThread = null;
+                    }
+                }
             }
+            closeContext();
+        }, "WhisperCloser").start();
+    }
+
+    private synchronized void closeContext() {
+        if (ctx == null) return;
+        try {
+            ctx.close();
+        } catch (Exception e) {
+            Log.e(TAG, "Error closing WhisperContext", e);
+        } finally {
+            ctx = null;
         }
         Log.i(TAG, "WhisperTranscriber closed");
     }
