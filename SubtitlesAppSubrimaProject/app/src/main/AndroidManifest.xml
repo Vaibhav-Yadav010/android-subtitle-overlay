@@ -57,9 +57,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/subtitlex_icon"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@drawable/subtitlex_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.Subtitles"
         tools:targetApi="31">
@@ -110,7 +110,7 @@
             Renders subtitles as a floating overlay on top of other applications.
             - Handles configuration changes: orientation and screenSize.
             - Runs as a foreground service for reliability.
-            - Not exported for internal use only.
+            - Not exported to prevent external access.
         -->
         <service
             android:name=".view.overlay.SubtitleOverlayService"
@@ -124,8 +124,8 @@
             *******************************************************************
             Provides a floating toggle button overlay to enable/disable subtitles in
             real time. Supports orientation and screen size changes.
-            - Runs as a foreground service.
-            - Not exported to restrict access to internal app usage.
+            - Runs as a foreground service for reliability.
+            - Not exported to restrict access to internal use.
         -->
         <service
             android:name=".view.overlay.FloatingToggleButtonService"
