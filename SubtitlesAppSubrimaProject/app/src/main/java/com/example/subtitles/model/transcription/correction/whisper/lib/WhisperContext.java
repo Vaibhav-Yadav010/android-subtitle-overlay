@@ -67,24 +67,36 @@ public class WhisperContext {
      * @param appContext application context
      * @param modelFileName model file name inside context.getFilesDir()
      */
-    public static void init(Context appContext, String modelFileName) throws IOException {
-        if (!initialized.compareAndSet(false, true)) {
+    public static synchronized void init(Context appContext, String modelFileName) throws IOException {
+        if (instance != null) {
             Log.i(TAG, "WhisperContext already initialized.");
             return;
         }
-        if (instance != null) return;
+        if (!initialized.compareAndSet(false, true)) {
+            Log.i(TAG, "WhisperContext initialization already in progress.");
+            return;
+        }
 
-        File modelFile = AssetUtils.getRequiredRuntimeModelFile(appContext, modelFileName);
-        long ptr = WhisperLib.initContext(modelFile.getAbsolutePath());
-        if (ptr == 0L)
-            throw new RuntimeException(" Failed to init Whisper from file: " + modelFile.getAbsolutePath());
+        long ptr = 0L;
+        try {
+            File modelFile = AssetUtils.getRequiredRuntimeModelFile(appContext, modelFileName);
+            ptr = WhisperLib.initContext(modelFile.getAbsolutePath());
+            if (ptr == 0L) {
+                throw new RuntimeException(" Failed to init Whisper from file: " + modelFile.getAbsolutePath());
+            }
 
-        instance = new WhisperContext(ptr);
-        String sysInfo = WhisperLib.getSystemInfo();
-        Log.i("WHISPER", "System Info: " + sysInfo);
+            instance = new WhisperContext(ptr);
+            String sysInfo = WhisperLib.getSystemInfo();
+            Log.i("WHISPER", "System Info: " + sysInfo);
 
-
-        Log.i(TAG, " WhisperContext initialized from file: " + modelFile.getAbsolutePath());
+            Log.i(TAG, " WhisperContext initialized from file: " + modelFile.getAbsolutePath());
+        } catch (IOException | RuntimeException e) {
+            if (ptr != 0L) {
+                WhisperLib.freeContext(ptr);
+            }
+            initialized.set(false);
+            throw e;
+        }
     }
 
 
@@ -172,7 +184,12 @@ public class WhisperContext {
     public void close() throws ExecutionException, InterruptedException {
         executor.submit(() -> WhisperLib.freeContext(ctxPtr)).get();
         executor.shutdown();
-        instance = null;
+        synchronized (WhisperContext.class) {
+            if (instance == this) {
+                instance = null;
+                initialized.set(false);
+            }
+        }
         Log.i(TAG, "WhisperContext closed");
     }
 }
