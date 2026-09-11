@@ -1,5 +1,5 @@
 // WhisperTranscriber.java
-        package com.example.subtitles.model.transcription.correction.whisper;
+package com.example.subtitles.model.transcription.correction.whisper;
 
 import android.content.Context;
 import android.os.Handler;
@@ -14,35 +14,17 @@ import android.os.Build;
 import com.example.subtitles.model.transcription.correction.transcriptSegment;
 import com.example.subtitles.model.transcription.correction.whisper.lib.WhisperContext;
 import com.example.subtitles.util.AssetUtils;
-import com.example.subtitles.view_model.MainPipeline;
 import com.example.subtitles.view_model.transcriptManager;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * ================================================================
- * WhisperTranscriber
- * ================================================================
- *
- * Singleton class for **streaming, chunked transcription** using Whisper.
- *
- * Responsibilities:
- *  - Append incoming audio in small chunks
- *  - Accumulate a 30s buffer window
- *  - Transcribe each window in order
- *  - Retain a small overlap (2s) for smoother continuity
- *  - Provide a listener interface for UI / downstream updates
- *  - Track language detection and processing performance
- *
- * Designed for repeated start/stop operation during the app lifecycle.
+ * Streaming, chunked transcription using Whisper.
  */
 @RequiresApi(api = Build.VERSION_CODES.O)
 public class WhisperTranscriber {
@@ -159,13 +141,17 @@ public class WhisperTranscriber {
     }
 
     public synchronized void start() {
-        if (running.getAndSet(true)) {
+        if (running.get()) return;
+        if (processingThread != null && processingThread.isAlive()) {
+            Log.w(TAG, "Cannot start Whisper while previous worker is still stopping");
             return;
         }
-        // stop() marks the previous processing loop as done. Clear that
-        // terminal state before creating the next worker so restart works.
+        if (ctx == null) {
+            throw new IllegalStateException("WhisperContext is closed");
+        }
         isDone = false;
         resetAll();
+        running.set(true);
         this.processingThread = new Thread(this::processingLoop, "WhisperProcessor");
         this.processingThread.start();
     }
@@ -177,12 +163,24 @@ public class WhisperTranscriber {
         }
         isDone = true;
         resetAll();
+        Thread worker = processingThread;
+        if (worker != null) {
+            worker.interrupt();
+        }
         new Thread(() -> {
             try {
-                processingThread.join();
+                if (worker != null && Thread.currentThread() != worker) {
+                    worker.join();
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 notifyError(e);
+            } finally {
+                synchronized (WhisperTranscriber.this) {
+                    if (processingThread == worker) {
+                        processingThread = null;
+                    }
+                }
             }
 
             if (counterProcessing > 0) {
@@ -196,15 +194,35 @@ public class WhisperTranscriber {
             if (onStopped != null) {
                 mainHandler.post(onStopped);
             }
-        }).start();
+        }, "WhisperStopper").start();
     }
 
     public synchronized void close() {
-        stop(() -> { });
-        try {
-            if (ctx != null) ctx.close();
-        } catch (Exception e) {
-            Log.e(TAG, "Error closing WhisperContext", e);
+        running.set(false);
+        isDone = true;
+        resetAll();
+        Thread worker = processingThread;
+        if (worker != null) {
+            worker.interrupt();
+            try {
+                if (Thread.currentThread() != worker) {
+                    worker.join();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Log.e(TAG, "Interrupted while stopping Whisper worker", e);
+                return;
+            }
+            processingThread = null;
+        }
+        if (ctx != null) {
+            try {
+                ctx.close();
+            } catch (Exception e) {
+                Log.e(TAG, "Error closing WhisperContext", e);
+            } finally {
+                ctx = null;
+            }
         }
         Log.i(TAG, "WhisperTranscriber closed");
     }
