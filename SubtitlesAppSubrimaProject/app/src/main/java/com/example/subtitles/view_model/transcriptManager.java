@@ -76,6 +76,7 @@ public class transcriptManager {
     private boolean statusSrcLangDetected = true;  // whether source language is set via auto-detection
     private String srcLang;                         // current source language code
     private Listener listener;                      // callback interface for updates/errors
+    private boolean captureStartPending = false;   // waits for Vosk readiness before starting audio capture
 
     /**
      * Whisper-based transcription for large audio windows and optional correction
@@ -192,11 +193,26 @@ public class transcriptManager {
 
             @Override
             public void onError(Exception e) {
+                captureStartPending = false;
+                running.set(false);
                 notifyError("Vosk Error: " + e.getMessage());
             }
 
             @Override
             public void onModelChange(String newLang, String modelPath) {
+                if (captureStartPending && running.get()) {
+                    captureStartPending = false;
+                    boolean started = capturer.start();
+                    if (!started) {
+                        running.set(false);
+                        transcriber.stop();
+                        Log.w(TAG, "Audio capture failed to start after Vosk became ready");
+                        notifyError("Audio capture failed to start");
+                        return;
+                    }
+                    Log.i(TAG, "Audio capture started after Vosk model became ready");
+                }
+
                 if (!newLang.isEmpty() && (!newLang.equals(srcLang))) {
                     srcLang = newLang;
                     if (listener != null) listener.onModelTranscriptChange(srcLang);
@@ -382,14 +398,9 @@ public class transcriptManager {
             return false;
         }
         setParmeters();
+        captureStartPending = true;
         transcriber.switchLanguageAsync(srcLang);
-        boolean started = capturer.start();
-        if (!started) {
-            stop();
-            Log.w(TAG, "Audio capture failed to start");
-            notifyError("Audio capture failed to start");
-        }
-        return started;
+        return true;
     }
     /**
      * Stops the transcription pipeline
@@ -399,6 +410,7 @@ public class transcriptManager {
             return;
         }
 
+        captureStartPending = false;
         capturer.stop(false);
         transcriber.stop();
         if (srcLang.isEmpty()) {
