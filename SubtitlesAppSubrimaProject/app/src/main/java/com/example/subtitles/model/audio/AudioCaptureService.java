@@ -25,7 +25,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
  * <p>
  * Uses MediaProjection API to obtain a live capture of the audio stream.
  * Starts as a foreground service to ensure reliability during recording.
- * Broadcasts a "service ready" event once the projection is granted.
+ * Broadcasts a "service ready" event only after projection initialization succeeds.
  */
 public class AudioCaptureService extends Service {
     // Channel ID for the foreground notification
@@ -85,9 +85,13 @@ public class AudioCaptureService extends Service {
         if (resultCode == Activity.RESULT_OK && projectionData != null) {
             try {
                 // The capturer is the single owner of the MediaProjection instance.
-                capturer.onProjectionGranted(resultCode, projectionData);
+                boolean projectionGranted = capturer.onProjectionGranted(resultCode, projectionData);
+                if (!projectionGranted) {
+                    Log.e("AudioCaptureService", "Capturer failed to initialize MediaProjection; service is not ready");
+                    return START_NOT_STICKY;
+                }
                 Log.d("AudioCaptureService", "Projection granted to capturer, sending ACTION_SERVICE_READY");
-                // Broadcast that the service is ready
+                // Broadcast that the service is ready only after successful projection initialization.
                 LocalBroadcastManager.getInstance(this)
                         .sendBroadcast(new Intent("com.example.subtitles.ACTION_SERVICE_READY"));
                 Log.d("AudioCaptureService", "Broadcast sent: ACTION_SERVICE_READY");
