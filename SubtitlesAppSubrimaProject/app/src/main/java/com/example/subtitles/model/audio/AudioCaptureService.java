@@ -6,8 +6,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
-import android.media.projection.MediaProjection;
-import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -32,9 +30,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 public class AudioCaptureService extends Service {
     // Channel ID for the foreground notification
     private static final String CHANNEL_ID = "audio_capture_channel";
-    // MediaProjection instance representing the live audio capture projection
-    private MediaProjection projection;
-    // Capturer object that handles the audio streaming
+    // Capturer object that owns the MediaProjection and handles the audio streaming
     private StreamAudioCapturer capturer;
     /**
      * Called when the service is first created.
@@ -87,16 +83,8 @@ public class AudioCaptureService extends Service {
         Log.d("AudioCaptureService", "Projection extras: resultCode=" + resultCode + ", projectionData=" + projectionData);
         // Validate the projection data
         if (resultCode == Activity.RESULT_OK && projectionData != null) {
-            MediaProjectionManager projectionManager =
-                    (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
             try {
-                // Assign the MediaProjection to the field if not already assigned
-                if (this.projection == null) {
-                    this.projection = projectionManager.getMediaProjection(resultCode, projectionData);
-                    if (this.projection == null) throw new RuntimeException("Projection is null");
-
-                }
-                // Notify the capturer that projection has been granted
+                // The capturer is the single owner of the MediaProjection instance.
                 capturer.onProjectionGranted(resultCode, projectionData);
                 Log.d("AudioCaptureService", "Projection granted to capturer, sending ACTION_SERVICE_READY");
                 // Broadcast that the service is ready
@@ -107,6 +95,7 @@ public class AudioCaptureService extends Service {
                 // Catch any security exceptions in case permissions are missing
                 Log.e("AudioCaptureService", "SecurityException while starting projection", e);
             } catch (RuntimeException e) {
+                // Catch runtime failures while initializing the projection through the capturer.
                 Log.e("AudioCaptureService", "RuntimeException while initializing projection", e);
             }
         } else {
@@ -143,12 +132,7 @@ public class AudioCaptureService extends Service {
     public void onDestroy() {
         super.onDestroy();
         Log.d("AudioCaptureService", "onDestroy()");
-        // Stop the active media projection if it exists
-        if (projection != null) {
-            projection.stop();
-            projection = null;
-        }
-        // Notify the capturer that the projection is no longer available
+        // The capturer owns the MediaProjection and is responsible for stopping it.
         capturer.onProjectionRevoked();
     }
     /**
