@@ -117,7 +117,6 @@ public class MainPipeline {
         try (InputStream is = context.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
-            is.read(buffer);
             String json = new String(buffer, StandardCharsets.UTF_8);
             googleLangMap = new JSONObject(json);
             Log.d(TAG, "Google language map loaded with " + googleLangMap.length() + " entries");
@@ -311,8 +310,8 @@ if (sourceChanged || targetChanged) {
             //throw new IllegalStateException("Already translating");
         }
         setParmeters();
-        boolean started = transcriber.start();
-        if (started) {
+        boolean transcriberStarted = transcriber.start();
+        if (transcriberStarted) {
             if (translator != null) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
                     @Override
@@ -337,9 +336,10 @@ if (sourceChanged || targetChanged) {
             SubtitleOverlayService.showOverlay();
             subtitlesServiceReady = true;
         } else {
-            Log.w(TAG, "Audio capture failed to start");
+            started.set(false);
+            Log.w(TAG, "Audio capture failed to start; pipeline state reset");
         }
-        return started;
+        return transcriberStarted;
     }
 
     /**
@@ -424,4 +424,3 @@ if (sourceChanged || targetChanged) {
     }
 
 }
-
