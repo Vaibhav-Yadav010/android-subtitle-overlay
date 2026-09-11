@@ -141,6 +141,21 @@ public class WhisperTranscriber {
         sumProcessingTime = 0;
     }
 
+    private static void joinUninterruptibly(Thread worker) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                worker.join();
+                break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     public synchronized void start() {
         if (running.get()) return;
         if (processingThread != null && processingThread.isAlive()) {
@@ -167,18 +182,12 @@ public class WhisperTranscriber {
             worker.interrupt();
         }
         new Thread(() -> {
-            try {
-                if (worker != null && Thread.currentThread() != worker) {
-                    worker.join();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                notifyError(e);
-            } finally {
-                synchronized (WhisperTranscriber.this) {
-                    if (processingThread == worker) {
-                        processingThread = null;
-                    }
+            if (worker != null && Thread.currentThread() != worker) {
+                joinUninterruptibly(worker);
+            }
+            synchronized (WhisperTranscriber.this) {
+                if (processingThread == worker) {
+                    processingThread = null;
                 }
             }
 
@@ -210,17 +219,10 @@ public class WhisperTranscriber {
 
         worker.interrupt();
         new Thread(() -> {
-            try {
-                worker.join();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                Log.e(TAG, "Interrupted while stopping Whisper worker", e);
-                return;
-            } finally {
-                synchronized (WhisperTranscriber.this) {
-                    if (processingThread == worker) {
-                        processingThread = null;
-                    }
+            joinUninterruptibly(worker);
+            synchronized (WhisperTranscriber.this) {
+                if (processingThread == worker) {
+                    processingThread = null;
                 }
             }
             resetAll();
