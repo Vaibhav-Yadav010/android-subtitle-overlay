@@ -62,17 +62,19 @@ public class transcriptSegment {
      * If adjustment fails, a warning is logged.
      */
     public void voskAjustTime() {
-        // Check if timestamps exceed the chunk window
-        if(start >= WhisperTranscriber.CHUNK_SEC*1000L || end >= WhisperTranscriber.CHUNK_SEC) {
-            // Shift timestamps backward by chunk size
-            start = Math.max(start-WhisperTranscriber.CHUNK_SEC*1000L, 0);
-            end = Math.max(end-WhisperTranscriber.CHUNK_SEC*1000L, 0);
-            // Valid segment after adjustment
-            if(end!=start) {
+        // Check if timestamps exceed the chunk window.
+        // Both segment timestamps and the chunk duration are expressed in milliseconds.
+        if (start >= WhisperTranscriber.CHUNK_SEC * 1000L
+                || end >= WhisperTranscriber.CHUNK_SEC * 1000L) {
+            // Shift timestamps backward by chunk size.
+            start = Math.max(start - WhisperTranscriber.CHUNK_SEC * 1000L, 0);
+            end = Math.max(end - WhisperTranscriber.CHUNK_SEC * 1000L, 0);
+            // Valid segment after adjustment.
+            if (end != start) {
                 return;
             }
         }
-        // Something went wrong
+        // Something went wrong.
         Log.i(TAG, "*************** PROBLEM: in voskAjustTime ************");
         Log.i(TAG, "*************** text: " + this.toString() + " ************");
     }
@@ -82,6 +84,7 @@ public class transcriptSegment {
     public String getSentence() {
         return sentence;
     }
+
     /**
      * Sets segment start time.
      */
