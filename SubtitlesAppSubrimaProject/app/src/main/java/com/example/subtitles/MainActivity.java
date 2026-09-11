@@ -265,7 +265,8 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(this,
                             "Failed to initialize pipeline: " + e.getMessage(),
                             Toast.LENGTH_LONG).show();
-                    resetTranscriptionButton();
+                    mainButton.setEnabled(false);
+                    mainButton.setImageResource(R.drawable.turn_on);
                 });
             } finally {
                 exec.shutdown();
