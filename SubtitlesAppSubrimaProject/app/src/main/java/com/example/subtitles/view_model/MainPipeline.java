@@ -117,6 +117,7 @@ public class MainPipeline {
         try (InputStream is = context.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
+            is.read(buffer);
             String json = new String(buffer, StandardCharsets.UTF_8);
             googleLangMap = new JSONObject(json);
             Log.d(TAG, "Google language map loaded with " + googleLangMap.length() + " entries");
