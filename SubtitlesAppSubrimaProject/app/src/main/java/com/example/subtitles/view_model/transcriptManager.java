@@ -210,7 +210,7 @@ public class transcriptManager {
                         notifyError("Audio capture failed to start");
                         return;
                     }
-                    Log.i(TAG, "Audio capture started after Vosk model became ready");
+                    Log.i(TAG, "Audio capture started after Vosk became ready");
                 }
 
                 if (!newLang.isEmpty() && (!newLang.equals(srcLang))) {
@@ -443,7 +443,10 @@ public class transcriptManager {
             Log.w(TAG, "Error closing LID", e);
         }
         transcriber.destroy();
-        whisperT.close();
+        if (whisperT != null) {
+            whisperT.close();
+            whisperT = null;
+        }
         Log.i(TAG, "Pipeline destroyed");
     }
 
