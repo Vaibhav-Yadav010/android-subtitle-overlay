@@ -161,6 +161,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         // Initialize UI components
         mainButton = findViewById(R.id.toggleMainButton);
+        mainButton.setEnabled(false);
         // Initialize MediaProjectionManager for screen capture requests
         projectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
 
@@ -180,26 +181,6 @@ public class MainActivity extends AppCompatActivity {
                     REQUEST_RECORD_AUDIO
             );
         }
-
-        // Initialize the MainPipeline in a background thread
-        ExecutorService exec = Executors.newSingleThreadExecutor();
-        exec.execute(() -> {
-            try {
-                long t0 = System.currentTimeMillis();
-                MainPipeline bgPipeline = new MainPipeline(this);
-                long dt = System.currentTimeMillis() - t0;
-                Log.d(TAG, "Pipeline init took " + dt + "ms");
-                runOnUiThread(() -> {
-                    pipeline = bgPipeline;
-                    mainButton.setEnabled(true); // Enable button after pipeline is ready
-                });
-            } catch (IOException e) {
-                runOnUiThread(() -> {
-                    Toast.makeText(this, "Failed to init pipeline: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                    finish(); // Close activity if pipeline fails to initialize
-                });
-            }
-        });
 
         // Register ActivityResultLauncher for overlay permission
         overlayPermissionLauncher = registerForActivityResult(
@@ -262,6 +243,38 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * ---------------------------------------------------------------------
+     * Initializes the MainPipeline after runtime model preparation succeeds.
+     * ---------------------------------------------------------------------
+     */
+    private void initializeMainPipeline() {
+        ExecutorService exec = Executors.newSingleThreadExecutor();
+        exec.execute(() -> {
+            try {
+                long t0 = System.currentTimeMillis();
+                MainPipeline bgPipeline = new MainPipeline(this);
+                long dt = System.currentTimeMillis() - t0;
+                Log.d(TAG, "Pipeline init took " + dt + "ms");
+                runOnUiThread(() -> {
+                    pipeline = bgPipeline;
+                    mainButton.setEnabled(true);
+                    Log.d(TAG, "MainPipeline ready; start button enabled");
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to initialize MainPipeline", e);
+                runOnUiThread(() -> {
+                    Toast.makeText(this,
+                            "Failed to initialize pipeline: " + e.getMessage(),
+                            Toast.LENGTH_LONG).show();
+                    resetTranscriptionButton();
+                });
+            } finally {
+                exec.shutdown();
+            }
+        });
+    }
+
+    /**
+     * ---------------------------------------------------------------------
      * Starts runtime model availability workflow.
      * ---------------------------------------------------------------------
      *
@@ -273,6 +286,7 @@ public class MainActivity extends AppCompatActivity {
      */
     private void startModelDownloadFlow() {
         showModelDownloadDialog();
+        mainButton.setEnabled(false);
 
         AssetUtils.ensureRuntimeModelsDownloaded(this, new AssetUtils.ModelDownloadCallback() {
             @Override
@@ -283,12 +297,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onSuccess() {
                 dismissModelDownloadDialog();
+                initializeMainPipeline();
             }
 
             @Override
             public void onError(String errorMessage) {
                 dismissModelDownloadDialog();
                 Toast.makeText(MainActivity.this, errorMessage, Toast.LENGTH_LONG).show();
+                mainButton.setEnabled(false);
 
                 new AlertDialog.Builder(MainActivity.this)
                         .setTitle("Model Download Failed")
@@ -476,7 +492,9 @@ public class MainActivity extends AppCompatActivity {
             if (grantResults.length > 0
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 Log.d(TAG, "RECORD_AUDIO permission granted");
-                mainButton.setEnabled(true);
+                if (pipeline != null) {
+                    mainButton.setEnabled(true);
+                }
                 if (pendingStartAfterAudioPermission) {
                     Log.d(TAG, "Continuing deferred startup after RECORD_AUDIO grant");
                     pendingStartAfterAudioPermission = false;
