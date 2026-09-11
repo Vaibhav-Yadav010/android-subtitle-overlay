@@ -7,7 +7,7 @@
         *******************************************************************
         Permissions required for the app to function correctly on devices,
         including audio recording, foreground service execution, media
-        projection, media playback, internet access, and overlay functionality.
+        projection, internet access, and overlay functionality.
     -->
 
     <!-- Enables the app to run foreground services -->
@@ -57,9 +57,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@drawable/subtitlex_icon"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/subtitlex_icon"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Subtitles"
         tools:targetApi="31">
@@ -110,7 +110,7 @@
             Renders subtitles as a floating overlay on top of other applications.
             - Handles configuration changes: orientation and screenSize.
             - Runs as a foreground service for reliability.
-            - Not exported to prevent external access.
+            - Not exported for internal use only.
         -->
         <service
             android:name=".view.overlay.SubtitleOverlayService"
@@ -125,7 +125,7 @@
             Provides a floating toggle button overlay to enable/disable subtitles in
             real time. Supports orientation and screen size changes.
             - Runs as a foreground service for reliability.
-            - Not exported to restrict access to internal use.
+            - Not exported to restrict access to internal app usage.
         -->
         <service
             android:name=".view.overlay.FloatingToggleButtonService"
