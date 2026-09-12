@@ -408,17 +408,8 @@ public class transcriptManager {
         }
         captureStartPending = true;
         setParmeters();
-        if (prefsSourceLanguageIsAuto()) {
-            transcriber.switchLanguageAsync(srcLang);
-        }
+        transcriber.switchLanguageAsync(srcLang);
         return true;
-    }
-    /**
-     * Returns whether the configured source language is automatic.
-     */
-    private boolean prefsSourceLanguageIsAuto() {
-        SharedPreferences prefs = context.getSharedPreferences("subrima_prefs", MODE_PRIVATE);
-        return "auto".equals(prefs.getString("pref_source_lang", "auto"));
     }
     /**
      * Stops the transcription pipeline
