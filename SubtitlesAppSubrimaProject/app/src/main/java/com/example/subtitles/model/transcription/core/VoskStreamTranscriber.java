@@ -69,7 +69,7 @@ public class VoskStreamTranscriber {
             "ja", "th", "lo", "km", "my", "bo"
     );
     /** Singleton instance */
-    private static VoskStreamTranscriber instance;
+    private static volatile VoskStreamTranscriber instance;
 
     /** Application context */
     private final Context context;
@@ -336,9 +336,7 @@ public class VoskStreamTranscriber {
      * Stops transcription and releases resources.
      */
     public synchronized void stop() {
-        if (!running.getAndSet(false)) {
-            return;
-        }
+        running.set(false);
         audioQueue.clear();
         if (workerThread != null) {
             workerThread.interrupt();
@@ -347,6 +345,7 @@ public class VoskStreamTranscriber {
                     workerThread.join(500);
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Interrupted while waiting for workerThread to finish", e);
+                    Thread.currentThread().interrupt();
                 }
             } else {
                 Log.w(TAG, "Avoided join on self-thread");
@@ -370,7 +369,11 @@ public class VoskStreamTranscriber {
             recognizer = null;
         }
         if (model != null) {
-            model.close();
+            try {
+                model.close();
+            } catch (Exception e) {
+                Log.e(TAG, "failed to close model", e);
+            }
             model = null;
             modelPath = "";
         }
@@ -398,7 +401,14 @@ public class VoskStreamTranscriber {
             }
         } else {
             try {
-                recognizer = new Recognizer(model, sampleRate);
+                Recognizer oldRecognizer = recognizer;
+                synchronized (lock) {
+                    recognizer = null;
+                    if (oldRecognizer != null) {
+                        oldRecognizer.close();
+                    }
+                    recognizer = new Recognizer(model, sampleRate);
+                }
                 lastResetWasFull = true;
                 lastSourceSentence = "";
                 Log.i(TAG, "Recognizer (re)initialized successfully");
@@ -616,6 +626,11 @@ public class VoskStreamTranscriber {
             speakerChange.close();
         }
         switchExecutor.shutdownNow();
+        synchronized (VoskStreamTranscriber.class) {
+            if (instance == this) {
+                instance = null;
+            }
+        }
     }
 
     /**
