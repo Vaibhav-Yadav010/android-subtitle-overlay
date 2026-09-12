@@ -2,12 +2,14 @@ package com.example.subtitles.archive.translation.tokenization;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 
 public class SentencePieceProcessor implements AutoCloseable {
 
     private final long rawPtr;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public SentencePieceProcessor() {
         rawPtr = SentencePieceJNI.sppCtor();
@@ -15,7 +17,9 @@ public class SentencePieceProcessor implements AutoCloseable {
 
     @Override
     public void close() {
-        SentencePieceJNI.sppDtor(rawPtr);
+        if (closed.compareAndSet(false, true)) {
+            SentencePieceJNI.sppDtor(rawPtr);
+        }
     }
 
     public void load(String filename) throws SentencePieceException {
