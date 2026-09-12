@@ -367,7 +367,11 @@ public class transcriptManager {
         } else {
             statusSrcLangDetected = false;
             if (lidDetector != null) lidDetector.stop();
+            boolean sourceChanged = !srcLang.equals(tempSrc);
             srcLang = tempSrc;
+            if (sourceChanged) {
+                transcriber.switchLanguageAsync(srcLang);
+            }
         }
         // Reset history and counters
         resetVoskHistory = false;
@@ -402,10 +406,19 @@ public class transcriptManager {
             Log.i(TAG, "Already running");
             return false;
         }
-        setParmeters();
         captureStartPending = true;
-        transcriber.switchLanguageAsync(srcLang);
+        setParmeters();
+        if (prefsSourceLanguageIsAuto()) {
+            transcriber.switchLanguageAsync(srcLang);
+        }
         return true;
+    }
+    /**
+     * Returns whether the configured source language is automatic.
+     */
+    private boolean prefsSourceLanguageIsAuto() {
+        SharedPreferences prefs = context.getSharedPreferences("subrima_prefs", MODE_PRIVATE);
+        return "auto".equals(prefs.getString("pref_source_lang", "auto"));
     }
     /**
      * Stops the transcription pipeline
