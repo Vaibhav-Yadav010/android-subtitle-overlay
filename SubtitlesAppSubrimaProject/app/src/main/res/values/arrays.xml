@@ -5,7 +5,6 @@
     <string-array name="lang_codes">
         <item>auto</item>
         <item>en</item>
-        <item>he</item>
         <item>fr</item>
         <item>es</item>
         <item>de</item>
@@ -18,7 +17,6 @@
     <string-array name="lang_names">
         <item>auto</item>
         <item>English</item>
-        <item>עברית</item>
         <item>Français</item>
         <item>Español</item>
         <item>Deutsch</item>
