@@ -41,6 +41,8 @@ public class WhisperTranscriber {
     private final float[] buffer = new float[CHUNK_SAMPLES];
     private int bufferLen = 0;
 
+    // Bound queued audio so a stalled native transcription cannot grow memory without limit.
+    private static final int MAX_QUEUED_CHUNKS = 8;
     private final BlockingQueue<float[]> audioQueue;
     private Thread processingThread;
     private volatile WhisperContext ctx = null;
@@ -58,7 +60,7 @@ public class WhisperTranscriber {
             throw new IllegalArgumentException("OVERLAP_SEC must be less than CHUNK_SEC");
         }
         this.ctx = WhisperContext.getInstance(context, MODEL_PATH);
-        this.audioQueue = new LinkedBlockingQueue<>();
+        this.audioQueue = new LinkedBlockingQueue<>(MAX_QUEUED_CHUNKS);
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.running = new AtomicBoolean(false);
     }
@@ -74,7 +76,11 @@ public class WhisperTranscriber {
     public void appendAudio(float[] samples) {
         if (samples == null || samples.length == 0 || !running.get()) return;
         float[] copy = samples.clone();
-        audioQueue.offer(copy);
+        if (!audioQueue.offer(copy)) {
+            // Drop the oldest queued chunk to keep latency bounded rather than accumulating stale audio.
+            audioQueue.poll();
+            audioQueue.offer(copy);
+        }
     }
 
     private void processingLoop() {
@@ -84,13 +90,19 @@ public class WhisperTranscriber {
 
                 if (chunk != null && chunk.length > 0) {
                     int incoming = chunk.length;
-                    if (bufferLen + incoming > buffer.length) {
-                        int overflow = (bufferLen + incoming) - buffer.length;
-                        System.arraycopy(buffer, overflow, buffer, 0, bufferLen - overflow);
-                        bufferLen -= overflow;
+                    if (incoming >= buffer.length) {
+                        // Keep the newest samples when a caller supplies more than one full Whisper window.
+                        System.arraycopy(chunk, incoming - buffer.length, buffer, 0, buffer.length);
+                        bufferLen = buffer.length;
+                    } else {
+                        if (bufferLen + incoming > buffer.length) {
+                            int overflow = (bufferLen + incoming) - buffer.length;
+                            System.arraycopy(buffer, overflow, buffer, 0, bufferLen - overflow);
+                            bufferLen -= overflow;
+                        }
+                        System.arraycopy(chunk, 0, buffer, bufferLen, incoming);
+                        bufferLen += incoming;
                     }
-                    System.arraycopy(chunk, 0, buffer, bufferLen, incoming);
-                    bufferLen += incoming;
                 }
 
                 if (bufferLen >= chunkSamples) {
