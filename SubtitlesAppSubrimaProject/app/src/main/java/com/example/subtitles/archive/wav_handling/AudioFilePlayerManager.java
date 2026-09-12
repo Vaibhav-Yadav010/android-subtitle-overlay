@@ -4,7 +4,6 @@ import android.content.Context;
 import android.media.MediaPlayer;
 import android.util.Log;
 
-
 import java.io.File;
 import java.io.IOException;
 
@@ -19,10 +18,10 @@ public class AudioFilePlayerManager {
     private MediaPlayer mediaPlayer;
     private File playbackFile;
     private boolean isPrepared = false;
+    private boolean startRequested = false;
+    private boolean destroyed = false;
 
     private Runnable onCompletionCallback;
-
-
 
     /**
      * @param context       Android context
@@ -45,8 +44,14 @@ public class AudioFilePlayerManager {
         try {
             mediaPlayer.setDataSource(playbackFile.getAbsolutePath());
             mediaPlayer.setOnPreparedListener(mp -> {
+                if (destroyed || mediaPlayer != mp) return;
                 isPrepared = true;
                 Log.i(TAG, "MediaPlayer prepared, duration=" + mp.getDuration() + "ms");
+                if (startRequested) {
+                    startRequested = false;
+                    mp.start();
+                    Log.i(TAG, "Playback started after prepare");
+                }
             });
             mediaPlayer.setOnCompletionListener(mp -> {
                 Log.i(TAG, "Playback completed");
@@ -57,6 +62,8 @@ public class AudioFilePlayerManager {
 
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 Log.e(TAG, "Playback error what=" + what + " extra=" + extra);
+                isPrepared = false;
+                startRequested = false;
                 return true; // handled
             });
             mediaPlayer.prepareAsync();
@@ -66,54 +73,59 @@ public class AudioFilePlayerManager {
     }
 
     public boolean isPlaying() {
-        return mediaPlayer != null && mediaPlayer.isPlaying();
+        return !destroyed && mediaPlayer != null && mediaPlayer.isPlaying();
     }
 
     public void setOnCompletionCallback(Runnable callback) {
         this.onCompletionCallback = callback;
     }
 
-    /** Starts playback if prepared; logs if not ready yet. */
+    /** Starts playback if prepared; otherwise starts automatically when preparation completes. */
     public void start() {
-        if (mediaPlayer == null) {
-            Log.w(TAG, "start() called but mediaPlayer is null");
+        if (destroyed || mediaPlayer == null) {
+            Log.w(TAG, "start() called after destroy or with null mediaPlayer");
             return;
         }
         if (!isPrepared) {
-            Log.w(TAG, "start() called before MediaPlayer prepared");
-            mediaPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                mp.start();
-                Log.i(TAG, "Playback started after prepare");
-            });
-        } else {
-            if(mediaPlayer.isPlaying()) return;
-            mediaPlayer.start();
-            Log.i(TAG, "Playback started");
+            startRequested = true;
+            Log.w(TAG, "start() called before MediaPlayer prepared; queued until prepare completes");
+            return;
         }
+        if (mediaPlayer.isPlaying()) return;
+        startRequested = false;
+        mediaPlayer.start();
+        Log.i(TAG, "Playback started");
     }
 
     /** Stops playback if playing, resets to start. */
     public void stop() {
-        if (mediaPlayer == null) {
-            Log.w(TAG, "stop() called but mediaPlayer is null");
+        if (destroyed || mediaPlayer == null) {
+            Log.w(TAG, "stop() called after destroy or with null mediaPlayer");
             return;
         }
-        if (mediaPlayer.isPlaying()) {
-            mediaPlayer.stop();
-            Log.i(TAG, "Playback stopped");
-            // after stop(), need to prepare again for future start()
-            try {
-                mediaPlayer.reset();
-                mediaPlayer.setDataSource(playbackFile.getAbsolutePath());
-                mediaPlayer.prepare();
-                isPrepared = true;
-                Log.i(TAG, "MediaPlayer re-prepared after stop");
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to re-prepare after stop", e);
-            }
-        } else {
+        startRequested = false;
+        if (!isPrepared) {
+            Log.i(TAG, "stop() called while MediaPlayer is still preparing");
+            return;
+        }
+        if (!mediaPlayer.isPlaying()) {
             Log.i(TAG, "stop() called but nothing was playing");
+            return;
+        }
+
+        mediaPlayer.stop();
+        Log.i(TAG, "Playback stopped");
+        // after stop(), need to prepare again for future start()
+        try {
+            isPrepared = false;
+            mediaPlayer.reset();
+            mediaPlayer.setDataSource(playbackFile.getAbsolutePath());
+            mediaPlayer.prepare();
+            isPrepared = true;
+            Log.i(TAG, "MediaPlayer re-prepared after stop");
+        } catch (IOException | IllegalStateException e) {
+            isPrepared = false;
+            Log.e(TAG, "Failed to re-prepare after stop", e);
         }
     }
 
@@ -121,6 +133,8 @@ public class AudioFilePlayerManager {
      * Releases all resources. After this, the manager should not be used.
      */
     public void destroy() {
+        destroyed = true;
+        startRequested = false;
         if (mediaPlayer != null) {
             try {
                 if (mediaPlayer.isPlaying()) {
