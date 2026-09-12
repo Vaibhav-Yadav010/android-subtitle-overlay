@@ -11,7 +11,7 @@ plugins {
 // Android Configuration Block
 // ----------------------------------------------------------------------------
 // Configures all Android-specific build options, including namespace, SDK versions,
-// default application configuration, instrumentation, native build settings,
+// default application configuration, native build settings, compilation options,
 // packaging options, and build types.
 android {
     // Application namespace used for resource packaging and manifest merging
@@ -135,5 +135,4 @@ dependencies {
     // Unit testing dependencies
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
-    androidTestImplementation libs.espresso.core
 }
