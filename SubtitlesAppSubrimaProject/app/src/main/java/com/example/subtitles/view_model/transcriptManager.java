@@ -43,7 +43,7 @@ public class transcriptManager {
     private static final String TAG = "transcriptManager";
 
     /// Singleton instance
-    private static transcriptManager instance;
+    private static volatile transcriptManager instance;
 
     /// Application context
     private final Context context;
@@ -195,6 +195,11 @@ public class transcriptManager {
             public void onError(Exception e) {
                 captureStartPending = false;
                 running.set(false);
+                try {
+                    capturer.stop(false);
+                } catch (Exception stopError) {
+                    Log.w(TAG, "Failed to stop audio capture after Vosk error", stopError);
+                }
                 notifyError("Vosk Error: " + e.getMessage());
             }
 
@@ -437,15 +442,22 @@ public class transcriptManager {
     public synchronized void close() {
         stop();
         StreamAudioCapturer.destroyInstance();
-        try {
-            lidDetector.close();
-        } catch (Exception e) {
-            Log.w(TAG, "Error closing LID", e);
+        if (lidDetector != null) {
+            try {
+                lidDetector.close();
+            } catch (Exception e) {
+                Log.w(TAG, "Error closing LID", e);
+            }
         }
         transcriber.destroy();
         if (whisperT != null) {
             whisperT.close();
             whisperT = null;
+        }
+        synchronized (transcriptManager.class) {
+            if (instance == this) {
+                instance = null;
+            }
         }
         Log.i(TAG, "Pipeline destroyed");
     }
