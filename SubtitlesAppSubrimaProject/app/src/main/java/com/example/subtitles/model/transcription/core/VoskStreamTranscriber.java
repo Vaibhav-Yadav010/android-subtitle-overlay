@@ -552,7 +552,12 @@ public class VoskStreamTranscriber {
                     isFinal = recognizer.acceptWaveForm(chunk.getShortAudio(), chunk.getShortAudio().length);
                     result = isFinal ? recognizer.getResult() : recognizer.getPartialResult();
                 }
-                handleTexts(result, isFinal, chunk.getTime());
+                synchronized (this) {
+                    if (!running.get() || destroyed) {
+                        continue;
+                    }
+                    handleTexts(result, isFinal, chunk.getTime());
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Transcription thread error", e);
@@ -713,7 +718,6 @@ public class VoskStreamTranscriber {
             return needsSpace ? a + " " + b : a + b;
         }
     }
-
 
     private int countUnits(String text) {
         Locale locale = Locale.forLanguageTag(currentLang);
