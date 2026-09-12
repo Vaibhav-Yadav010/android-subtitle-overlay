@@ -36,7 +36,7 @@ public class StreamAudioCapturer {
     private final AudioManager.AudioPlaybackCallback playbackCallback;
     private MediaProjection projection;
     private AudioRecord recorder;
-    private OnAudioCaptureListener listener;
+    private volatile OnAudioCaptureListener listener;
     private Thread captureThread;
 
     private StreamAudioCapturer(Context context, int sampleRate) {
@@ -91,25 +91,30 @@ public class StreamAudioCapturer {
     }
 
     public boolean onProjectionGranted(int resultCode, Intent data) {
-        if (projection != null) return true;
-        projection = projectionManager.getMediaProjection(resultCode, data);
-        if (projection == null) {
-            Log.e(TAG, "Failed to obtain MediaProjection (null)");
-            return false;
-        }
-        projection.registerCallback(new MediaProjection.Callback() {
-            @Override
-            public void onStop() {
-                Log.e(TAG, "MediaProjection.onStop() called — projection permission revoked by system");
-                Log.e(TAG, "isCapturing=" + capturing.get());
-                Log.e(TAG, "stopedMidCapturing=" + stopedMidCapturing.get());
-                stop(true);
+        synchronized (lock) {
+            if (projection != null) return true;
+            projection = projectionManager.getMediaProjection(resultCode, data);
+            if (projection == null) {
+                Log.e(TAG, "Failed to obtain MediaProjection (null)");
+                return false;
             }
-        }, main);
-        if (stopedMidCapturing.get()) {
-            if (!start()) Log.e(TAG, "Failed to start again capturing");
+            projection.registerCallback(new MediaProjection.Callback() {
+                @Override
+                public void onStop() {
+                    Log.e(TAG, "MediaProjection.onStop() called — projection permission revoked by system");
+                    Log.e(TAG, "isCapturing=" + capturing.get());
+                    Log.e(TAG, "stopedMidCapturing=" + stopedMidCapturing.get());
+                    stop(true);
+                    synchronized (lock) {
+                        if (projection != null) projection = null;
+                    }
+                }
+            }, main);
+            if (stopedMidCapturing.get()) {
+                if (!start()) Log.e(TAG, "Failed to start again capturing");
+            }
+            return true;
         }
-        return true;
     }
 
     public void onProjectionRevoked() {
@@ -127,6 +132,10 @@ public class StreamAudioCapturer {
         if (capturing.get()) return false;
         synchronized (lock) {
             if (capturing.get()) return false;
+            if (projection == null) {
+                Log.e(TAG, "Cannot start audio capture without an active MediaProjection");
+                return false;
+            }
             AudioRecord newRecorder = null;
             boolean callbackRegistered = false;
             try {
