@@ -218,7 +218,10 @@ public class VoskStreamTranscriber {
             LanguageModelManager mgr = LanguageModelManager.getInstance(context);
             modelDir = mgr.loadModel(langCode);
             if (modelDir == null || !modelDir.isDirectory()) {
-                Log.e(TAG, "Model directory invalid for lang=" + langCode);
+                IllegalStateException e = new IllegalStateException(
+                        "Model directory invalid for lang=" + langCode);
+                Log.e(TAG, e.getMessage());
+                notifyError(e);
                 return;
             }
         } catch (Exception e) {
@@ -524,6 +527,8 @@ public class VoskStreamTranscriber {
                     break;
                 } catch (Exception e) {
                     Log.e(TAG, "Error in transcription loop", e);
+                    running.set(false);
+                    notifyError(e);
                     break;
                 }
 
@@ -561,6 +566,7 @@ public class VoskStreamTranscriber {
             }
         } catch (Exception e) {
             Log.e(TAG, "Transcription thread error", e);
+            running.set(false);
             notifyError(e);
         }
     }
@@ -615,7 +621,7 @@ public class VoskStreamTranscriber {
                 }
 
                 if (newWords.isEmpty()) {
-                    //Log.i(TAG, "No new words to display (already shown or partial too short)");
+                    //Log.i(TAG, "No transcript detected (already shown or partial too short)");
                     return false;
                 }
 
