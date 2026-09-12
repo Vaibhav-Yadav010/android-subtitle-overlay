@@ -94,6 +94,12 @@ public class VoskStreamTranscriber {
     /** Prevents concurrent language switches */
     private final AtomicBoolean languageSwitchInProgress = new AtomicBoolean(false);
 
+    /** Generation of the latest language-switch request. */
+    private long languageSwitchGeneration = 0L;
+
+    /** True after destroy() has begun; prevents stale async work from reviving the instance. */
+    private boolean destroyed = false;
+
     /** Executor used for async model switching */
     private ExecutorService switchExecutor = Executors.newSingleThreadExecutor();
 
@@ -201,7 +207,7 @@ public class VoskStreamTranscriber {
      * Failure contract: if any phase before stop() fails we return immediately
      * without touching the running pipeline — the old language keeps working.
      */
-    private void switchLanguage(String langCode) {
+    private void switchLanguage(String langCode, long generation) {
         // ── Phase 1: retrieve / download the model from disk ──────────────────
         // The old-language worker continues transcribing while we download.
         File modelDir;
@@ -216,6 +222,13 @@ public class VoskStreamTranscriber {
             Log.e(TAG, "Model load failed, cannot switch language to " + langCode, e);
             notifyError(e);
             return;
+        }
+
+        synchronized (this) {
+            if (destroyed || generation != languageSwitchGeneration) {
+                Log.i(TAG, "Ignoring stale language switch before model initialization: " + langCode);
+                return;
+            }
         }
 
         // Quick same-model guard (thread-safe read of modelPath under lock)
@@ -240,12 +253,32 @@ public class VoskStreamTranscriber {
             return;  // old transcription is still running — do not kill it
         }
 
+        synchronized (this) {
+            if (destroyed || generation != languageSwitchGeneration) {
+                try {
+                    newModel.close();
+                } catch (Exception closeError) {
+                    Log.w(TAG, "Failed to close stale Vosk model", closeError);
+                }
+                Log.i(TAG, "Ignoring stale language switch after model initialization: " + langCode);
+                return;
+            }
+        }
+
         // ── Phase 3: atomic swap ───────────────────────────────────────────────
         // stop() is synchronized and waits for the worker's current
         // handleTexts() call to finish before shutting it down cleanly.
         // After stop() returns the worker is gone and we own the pipeline.
         stop();
         synchronized (this) {
+            if (destroyed || generation != languageSwitchGeneration) {
+                try {
+                    newModel.close();
+                } catch (Exception closeError) {
+                    Log.w(TAG, "Failed to close stale Vosk model after stop", closeError);
+                }
+                return;
+            }
             notifyListener("", "new language detected: " + langCode);
             lastNotified = "";
             lastNotifiedUnModify = "";
@@ -253,6 +286,17 @@ public class VoskStreamTranscriber {
             modelPath = modelDir.getAbsolutePath();
             model = newModel;
             resetTranscriber(true);
+            if (recognizer == null) {
+                try {
+                    model.close();
+                } catch (Exception closeError) {
+                    Log.w(TAG, "Failed to close model after recognizer initialization failure", closeError);
+                }
+                model = null;
+                modelPath = "";
+                currentLang = "";
+                return;
+            }
             Log.i(TAG, "Loaded model for language=" + langCode);
             start();
             notifyLangChange(currentLang, modelPath);
@@ -262,36 +306,47 @@ public class VoskStreamTranscriber {
      * Switch language asynchronously.
      */
     public void switchLanguageAsync(String langCode) {
-        Log.i(TAG, "[switchLanguage] enter: langCode='" + langCode + "', currentLang='" + currentLang + "'");
+        synchronized (this) {
+            Log.i(TAG, "[switchLanguage] enter: langCode='" + langCode + "', currentLang='" + currentLang + "'");
 
-        if (langCode == null || langCode.isEmpty()) {
-            Log.i(TAG, "Language unchanged - problem input lang: " + langCode);
-            return;
-        }
-
-        if (!currentLang.isEmpty() && langCode.equals(currentLang)) {
-            Log.i(TAG, "Language unchanged: " + langCode);
-            return;
-        }
-
-        // Try to set the flag; skip if already in progress
-        if (!languageSwitchInProgress.compareAndSet(false, true)) {
-            Log.w(TAG, "Language switch already in progress. Ignored request to switch to: " + langCode);
-            return;
-        }
-
-        if (switchExecutor == null || switchExecutor.isShutdown()) {
-            switchExecutor = Executors.newSingleThreadExecutor();
-        }
-        switchExecutor.submit(() -> {
-            try {
-                switchLanguage(langCode);
-                specialLanguageNotSpacedOut = NOSPACE_LANGS.contains(currentLang);
-            } finally {
-                languageSwitchInProgress.set(false); // Always reset
+            if (destroyed || langCode == null || langCode.isEmpty()) {
+                Log.i(TAG, "Ignoring language switch request because transcriber is destroyed or input is invalid");
+                return;
             }
-        });
 
+            if (!currentLang.isEmpty() && langCode.equals(currentLang)) {
+                Log.i(TAG, "Language unchanged: " + langCode);
+                return;
+            }
+
+            if (!languageSwitchInProgress.compareAndSet(false, true)) {
+                Log.w(TAG, "Language switch already in progress. Ignored request to switch to: " + langCode);
+                return;
+            }
+
+            final long generation = ++languageSwitchGeneration;
+            if (switchExecutor == null || switchExecutor.isShutdown()) {
+                switchExecutor = Executors.newSingleThreadExecutor();
+            }
+
+            try {
+                switchExecutor.submit(() -> {
+                    try {
+                        switchLanguage(langCode, generation);
+                        synchronized (this) {
+                            if (!destroyed && generation == languageSwitchGeneration) {
+                                specialLanguageNotSpacedOut = NOSPACE_LANGS.contains(currentLang);
+                            }
+                        }
+                    } finally {
+                        languageSwitchInProgress.set(false);
+                    }
+                });
+            } catch (RuntimeException e) {
+                languageSwitchInProgress.set(false);
+                notifyError(e);
+            }
+        }
     }
 
 
@@ -318,17 +373,17 @@ public class VoskStreamTranscriber {
      * Enqueue audio chunk for transcription.
      */
     public void acceptAudio(TaggedAudioChunk chunk) {
-        if (!running.get() || recognizer == null) return;
+        synchronized (this) {
+            if (!running.get() || recognizer == null || destroyed) return;
 
-        // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.
-        // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.
-        // Audio is kept flowing directly into the Vosk queue for low-latency transcription.
-
-
-        if (!audioQueue.offer(chunk)) {
-    audioQueue.poll();
-    audioQueue.offer(chunk);
-}
+            // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.
+            // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.
+            // Audio is kept flowing directly into the Vosk queue for low-latency transcription.
+            if (!audioQueue.offer(chunk)) {
+                audioQueue.poll();
+                audioQueue.offer(chunk);
+            }
+        }
     }
 
 
@@ -620,7 +675,9 @@ public class VoskStreamTranscriber {
     /**
      * Releases everything.
      */
-    public void destroy() {
+    public synchronized void destroy() {
+        destroyed = true;
+        ++languageSwitchGeneration;
         stop();
         if (speakerChange != null) {
             speakerChange.close();
