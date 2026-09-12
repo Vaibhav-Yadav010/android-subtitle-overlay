@@ -1,8 +1,8 @@
 name: MlKit remediation
 
 on:
-  push:
-    branches: [ mlkit-remediation-work ]
+  pull_request:
+    branches: [ captionx-v2 ]
 
 jobs:
   patch:
@@ -12,8 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Patch generation guards
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -23,7 +21,6 @@ jobs:
           new = old + '    private final AtomicInteger modelGeneration = new AtomicInteger(0); // Tracks latest model initialization\n'
           assert old in s and 'modelGeneration' not in s
           s = s.replace(old, new, 1)
-
           old = '''        lock.lock();
         try {
             requestCounter.incrementAndGet(); // Cancel any in-flight requests
@@ -49,7 +46,6 @@ jobs:
 '''
           assert old in s
           s = s.replace(old, new, 1)
-
           old = '''            directTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
                         directReady = true;
@@ -73,29 +69,21 @@ jobs:
 '''
           new = '''            directTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
-                        if (!isCurrentGeneration(generation)) {
-                            return;
-                        }
+                        if (!isCurrentGeneration(generation)) return;
                         directReady = true;
                         listener.onReady();
                     })
                     .addOnFailureListener(e -> {
-                        if (!isCurrentGeneration(generation)) {
-                            return;
-                        }
+                        if (!isCurrentGeneration(generation)) return;
                         Log.w(TAG, "Direct model failed, attempting fallback via English", e);
                         setupIntermediate(new ReadyListener() {
                             @Override
                             public void onReady() {
-                                if (isCurrentGeneration(generation)) {
-                                    listener.onReady(); // fallback succeeded
-                                }
+                                if (isCurrentGeneration(generation)) listener.onReady();
                             }
-
                             @Override
                             public void onError(Exception fallbackError) {
                                 if (isCurrentGeneration(generation)) {
-                                    // both direct and fallback failed
                                     listener.onError(new TranslationException.DownloadError(e));
                                 }
                             }
@@ -104,7 +92,6 @@ jobs:
 '''
           assert old in s
           s = s.replace(old, new, 1)
-
           old = '''    private void setupIntermediate(ReadyListener listener) {
         lock.lock();
         try {
@@ -116,14 +103,11 @@ jobs:
                                    String src, String tgt) {
         lock.lock();
         try {
-            if (modelGeneration.get() != generation) {
-                return;
-            }
+            if (modelGeneration.get() != generation) return;
             String eng = TranslateLanguage.ENGLISH;
 '''
           assert old in s
           s = s.replace(old, new, 1)
-
           old = '''            interTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
                         interReady = true;
@@ -158,12 +142,9 @@ jobs:
 '''
           new = '''            interTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
-                        if (!isCurrentGeneration(generation)) {
-                            return;
-                        }
+                        if (!isCurrentGeneration(generation)) return;
                         interReady = true;
                         useIntermediate = true;
-                        // Prepare English->target final step if needed
                         if (!eng.equals(tgt)) {
                             TranslatorOptions finalOpts = new TranslatorOptions.Builder()
                                     .setSourceLanguage(eng)
@@ -171,49 +152,36 @@ jobs:
                                     .build();
                             lock.lock();
                             try {
-                                if (!isCurrentGeneration(generation)) {
-                                    return;
-                                }
+                                if (!isCurrentGeneration(generation)) return;
                                 directTranslator = Translation.getClient(finalOpts);
                             } finally {
                                 lock.unlock();
                             }
-
                             directTranslator.downloadModelIfNeeded()
                                     .addOnSuccessListener(v2 -> {
-                                        if (!isCurrentGeneration(generation)) {
-                                            return;
-                                        }
+                                        if (!isCurrentGeneration(generation)) return;
                                         finalReady = true;
                                         listener.onReady();
                                     })
                                     .addOnFailureListener(e -> {
-                                        if (!isCurrentGeneration(generation)) {
-                                            return;
-                                        }
+                                        if (!isCurrentGeneration(generation)) return;
                                         Log.e(TAG, "Final fallback model (en->target) failed", e);
                                         listener.onError(new TranslationException.NoTranslationPath());
                                     });
-
                         } else {
-                            if (!isCurrentGeneration(generation)) {
-                                return;
-                            }
+                            if (!isCurrentGeneration(generation)) return;
                             finalReady = true;
                             listener.onReady();
                         }
                     })
                     .addOnFailureListener(e2 -> {
-                        if (!isCurrentGeneration(generation)) {
-                            return;
-                        }
+                        if (!isCurrentGeneration(generation)) return;
                         Log.e(TAG, "Intermediate model (source->en) failed", e2);
                         listener.onError(new TranslationException.NoTranslationPath());
                     });
 '''
           assert old in s
           s = s.replace(old, new, 1)
-
           marker = '''    // ================================================================
     // Language safety & getters
     // ================================================================
@@ -225,16 +193,13 @@ jobs:
 '''
           assert marker in s and helper not in s
           s = s.replace(marker, helper + marker, 1)
-
           old = '            requestCounter.incrementAndGet();\n            closeTranslators();\n'
           new = '            modelGeneration.incrementAndGet();\n            requestCounter.incrementAndGet();\n            closeTranslators();\n'
           assert old in s
           s = s.replace(old, new, 2)
-
           p.write_text(s)
           PY
           git diff --check
-          git diff -- SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java
           git status --short
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
