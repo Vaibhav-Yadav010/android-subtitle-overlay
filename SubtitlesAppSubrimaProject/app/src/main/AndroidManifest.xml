@@ -19,9 +19,6 @@
     <!-- Grants access to device microphone for live audio capture -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Allows media playback to run in foreground services -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-
     <!-- Enables network access for fetching subtitles or remote communication -->
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -94,14 +91,14 @@
             *******************************************************************
             Audio Capture Service
             *******************************************************************
-            Foreground service responsible for capturing live audio from the device
-            microphone. Not exported to prevent external access.
-            - Foreground service type: mediaProjection and mediaPlayback.
+            Foreground service responsible for capturing live device audio through
+            MediaProjection playback capture. Not exported to prevent external access.
+            - Foreground service type: mediaProjection.
         -->
         <service
             android:name=".model.audio.AudioCaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|mediaPlayback" />
+            android:foregroundServiceType="mediaProjection" />
 
         <!--
             *******************************************************************
@@ -111,12 +108,13 @@
             - Handles configuration changes: orientation and screenSize.
             - Runs as a foreground service for reliability.
             - Not exported for internal use only.
+            - No mediaProjection/mediaPlayback foreground-service type is declared
+              because this service does not perform either operation.
         -->
         <service
             android:name=".view.overlay.SubtitleOverlayService"
             android:exported="false"
-            android:configChanges="orientation|screenSize"
-            android:foregroundServiceType="mediaProjection|mediaPlayback" />
+            android:configChanges="orientation|screenSize" />
 
         <!--
             *******************************************************************
@@ -126,12 +124,13 @@
             real time. Supports orientation and screen size changes.
             - Runs as a foreground service for reliability.
             - Not exported to restrict access to internal app usage.
+            - No mediaProjection/mediaPlayback foreground-service type is declared
+              because this service does not perform either operation.
         -->
         <service
             android:name=".view.overlay.FloatingToggleButtonService"
             android:exported="false"
-            android:configChanges="orientation|screenSize"
-            android:foregroundServiceType="mediaProjection|mediaPlayback" />
+            android:configChanges="orientation|screenSize" />
 
     </application>
 
