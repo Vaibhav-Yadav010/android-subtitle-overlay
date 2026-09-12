@@ -30,7 +30,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -90,9 +89,6 @@ public class VoskStreamTranscriber {
 
     /** Synchronization lock for recognizer access */
     private final Object lock = new Object();
-
-    /** Prevents concurrent language switches */
-    private final AtomicBoolean languageSwitchInProgress = new AtomicBoolean(false);
 
     /** Generation of the latest language-switch request. */
     private long languageSwitchGeneration = 0L;
@@ -208,6 +204,13 @@ public class VoskStreamTranscriber {
      * without touching the running pipeline — the old language keeps working.
      */
     private void switchLanguage(String langCode, long generation) {
+        synchronized (this) {
+            if (destroyed || generation != languageSwitchGeneration) {
+                Log.i(TAG, "Ignoring stale language switch before model load: " + langCode);
+                return;
+            }
+        }
+
         // ── Phase 1: retrieve / download the model from disk ──────────────────
         // The old-language worker continues transcribing while we download.
         File modelDir;
@@ -304,6 +307,9 @@ public class VoskStreamTranscriber {
     }
     /**
      * Switch language asynchronously.
+     * Every request is submitted to the single-thread executor. A newer request
+     * advances the generation, so older queued/running requests are discarded
+     * before they can swap an obsolete model into the live pipeline.
      */
     public void switchLanguageAsync(String langCode) {
         synchronized (this) {
@@ -319,11 +325,6 @@ public class VoskStreamTranscriber {
                 return;
             }
 
-            if (!languageSwitchInProgress.compareAndSet(false, true)) {
-                Log.w(TAG, "Language switch already in progress. Ignored request to switch to: " + langCode);
-                return;
-            }
-
             final long generation = ++languageSwitchGeneration;
             if (switchExecutor == null || switchExecutor.isShutdown()) {
                 switchExecutor = Executors.newSingleThreadExecutor();
@@ -334,16 +335,15 @@ public class VoskStreamTranscriber {
                     try {
                         switchLanguage(langCode, generation);
                         synchronized (this) {
-                            if (!destroyed && generation == languageSwitchGeneration) {
+                            if (!destroyed && generation == languageSwitchGeneration && model != null) {
                                 specialLanguageNotSpacedOut = NOSPACE_LANGS.contains(currentLang);
                             }
                         }
-                    } finally {
-                        languageSwitchInProgress.set(false);
+                    } catch (RuntimeException e) {
+                        notifyError(e);
                     }
                 });
             } catch (RuntimeException e) {
-                languageSwitchInProgress.set(false);
                 notifyError(e);
             }
         }
