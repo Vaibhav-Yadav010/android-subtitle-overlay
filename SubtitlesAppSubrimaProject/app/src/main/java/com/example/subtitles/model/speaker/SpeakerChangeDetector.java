@@ -71,7 +71,7 @@ public class SpeakerChangeDetector {
     private static final float STDEV_MULT = 2.0f;
     /** ONNX model filename in app internal storage. */
     public static final String MODEL_PATH = AssetUtils.PYANNOTE_MODEL_FILE;
-    private static SpeakerChangeDetector instance;
+    private static volatile SpeakerChangeDetector instance;
     /** Adaptive RMS silence threshold. */
     private static double RMS_THRESHOLD = SmoothRmsAdjuster.RMS_THRESHOLD_DEFAULT;
     /** ONNX runtime environment. */
@@ -106,9 +106,10 @@ public class SpeakerChangeDetector {
         try {
             env = OrtEnvironment.getEnvironment();
             File modelFile = AssetUtils.getRequiredRuntimeModelFile(ctx, MODEL_PATH);
-            OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-            opts.addConfigEntry("session.use_xnnpack", "1");
-            session = env.createSession(modelFile.getAbsolutePath(), opts);
+            try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
+                opts.addConfigEntry("session.use_xnnpack", "1");
+                session = env.createSession(modelFile.getAbsolutePath(), opts);
+            }
             inputName = session.getInputNames().iterator().next();
 
             Log.i(TAG, "Loaded Pyannote Embedding ONNX model: " + MODEL_PATH);
@@ -298,15 +299,28 @@ public class SpeakerChangeDetector {
      */
     public synchronized void reset(boolean fullReset) {
         RMS_THRESHOLD = SmoothRmsAdjuster.RMS_THRESHOLD_DEFAULT;
-        writePos = 0;
-        filled = 0;
         if (fullReset) {
+            writePos = 0;
+            filled = 0;
             embedHistory.clear();
             emaEmbed = null;
             emaRms = 0.0;
         } else {
-            writePos = (writePos + 2) % WINDOW_SIZE;
-            filled = Math.min(WINDOW_SIZE, filled + 2);
+            // Preserve the actual chronological tail of the circular buffer.
+            int oldWritePos = writePos;
+            int recentSamples = Math.min(filled, 2 * CHUNK_SAMPLES);
+            short[] recentAudio = new short[recentSamples];
+            int start = (oldWritePos - recentSamples + WINDOW_SIZE) % WINDOW_SIZE;
+            int firstPart = Math.min(recentSamples, WINDOW_SIZE - start);
+            System.arraycopy(pcmBuffer, start, recentAudio, 0, firstPart);
+            if (firstPart < recentSamples) {
+                System.arraycopy(pcmBuffer, 0, recentAudio, firstPart, recentSamples - firstPart);
+            }
+
+            Arrays.fill(pcmBuffer, (short) 0);
+            System.arraycopy(recentAudio, 0, pcmBuffer, 0, recentSamples);
+            writePos = recentSamples % WINDOW_SIZE;
+            filled = recentSamples;
 
             // preserve only the two most recent history entries
             float[][] recent = embedHistory.stream()
@@ -314,20 +328,6 @@ public class SpeakerChangeDetector {
                     .toArray(float[][]::new);
             embedHistory.clear();
             Arrays.stream(recent).forEach(embedHistory::addLast);
-            // clear audioWindow but reinsert the last two chunks
-            short[] last1 = Arrays.copyOfRange(pcmBuffer,
-                    pcmBuffer.length - 2 * CHUNK_SAMPLES,
-                    pcmBuffer.length - CHUNK_SAMPLES);
-            short[] last2 = Arrays.copyOfRange(pcmBuffer,
-                    pcmBuffer.length - CHUNK_SAMPLES,
-                    pcmBuffer.length);
-            java.util.Arrays.fill(pcmBuffer, (short)0);
-            System.arraycopy(last1, 0, pcmBuffer,
-                    pcmBuffer.length - 2 * CHUNK_SAMPLES,
-                    CHUNK_SAMPLES);
-            System.arraycopy(last2, 0, pcmBuffer,
-                    pcmBuffer.length - CHUNK_SAMPLES,
-                    CHUNK_SAMPLES);
         }
 
         Log.i(TAG, "SpeakerChangeDetector reset");
