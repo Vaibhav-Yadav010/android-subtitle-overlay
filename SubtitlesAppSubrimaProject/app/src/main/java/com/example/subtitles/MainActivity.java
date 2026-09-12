@@ -93,6 +93,10 @@ public class MainActivity extends AppCompatActivity {
     /// Non-cancelable loading dialog while required runtime models are downloaded
     private AlertDialog modelDownloadDialog;
 
+    /// Guards asynchronous callbacks from a destroyed/recreated Activity instance
+    private volatile boolean destroyed = false;
+    private int initializationGeneration = 0;
+
     /**
      * BroadcastReceiver to listen for ACTION_SERVICE_READY
      * This is sent when the background audio capture or overlay service is ready.
@@ -247,31 +251,52 @@ public class MainActivity extends AppCompatActivity {
      * ---------------------------------------------------------------------
      */
     private void initializeMainPipeline() {
+        final int generation;
+        synchronized (lock) {
+            generation = ++initializationGeneration;
+        }
         ExecutorService exec = Executors.newSingleThreadExecutor();
         exec.execute(() -> {
             try {
                 long t0 = System.currentTimeMillis();
-                MainPipeline bgPipeline = new MainPipeline(this);
+                MainPipeline bgPipeline = new MainPipeline(getApplicationContext());
                 long dt = System.currentTimeMillis() - t0;
                 Log.d(TAG, "Pipeline init took " + dt + "ms");
+                if (destroyed || !isCurrentInitialization(generation)) {
+                    bgPipeline.destroy();
+                    return;
+                }
                 runOnUiThread(() -> {
+                    if (destroyed || !isCurrentInitialization(generation)) {
+                        bgPipeline.destroy();
+                        return;
+                    }
                     pipeline = bgPipeline;
                     mainButton.setEnabled(true);
                     Log.d(TAG, "MainPipeline ready; start button enabled");
                 });
             } catch (Exception e) {
                 Log.e(TAG, "Failed to initialize MainPipeline", e);
-                runOnUiThread(() -> {
-                    Toast.makeText(this,
-                            "Failed to initialize pipeline: " + e.getMessage(),
-                            Toast.LENGTH_LONG).show();
-                    mainButton.setEnabled(false);
-                    mainButton.setImageResource(R.drawable.turn_on);
-                });
+                if (!destroyed && isCurrentInitialization(generation)) {
+                    runOnUiThread(() -> {
+                        if (destroyed || !isCurrentInitialization(generation)) return;
+                        Toast.makeText(this,
+                                "Failed to initialize pipeline: " + e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                        mainButton.setEnabled(false);
+                        mainButton.setImageResource(R.drawable.turn_on);
+                    });
+                }
             } finally {
                 exec.shutdown();
             }
         });
+    }
+
+    private boolean isCurrentInitialization(int generation) {
+        synchronized (lock) {
+            return !destroyed && initializationGeneration == generation;
+        }
     }
 
     /**
@@ -292,17 +317,21 @@ public class MainActivity extends AppCompatActivity {
         AssetUtils.ensureRuntimeModelsDownloaded(this, new AssetUtils.ModelDownloadCallback() {
             @Override
             public void onProgress(String modelName, int percentage) {
-                updateModelDownloadMessage("Downloading " + modelName + " (" + percentage + "%)");
+                if (!destroyed) {
+                    updateModelDownloadMessage("Downloading " + modelName + " (" + percentage + "%)");
+                }
             }
 
             @Override
             public void onSuccess() {
+                if (destroyed) return;
                 dismissModelDownloadDialog();
                 initializeMainPipeline();
             }
 
             @Override
             public void onError(String errorMessage) {
+                if (destroyed) return;
                 dismissModelDownloadDialog();
                 Toast.makeText(MainActivity.this, errorMessage, Toast.LENGTH_LONG).show();
                 mainButton.setEnabled(false);
@@ -670,6 +699,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        synchronized (lock) {
+            destroyed = true;
+            initializationGeneration++;
+        }
         super.onDestroy();
         dismissModelDownloadDialog();
         // Stop overlay services
