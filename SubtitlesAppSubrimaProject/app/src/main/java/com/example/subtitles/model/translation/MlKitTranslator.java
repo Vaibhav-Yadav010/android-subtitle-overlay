@@ -55,6 +55,7 @@ public class MlKitTranslator implements AutoCloseable {
     private String targetLang;                     // Current target language
 
     private final AtomicInteger requestCounter = new AtomicInteger(0); // Tracks latest request ID
+    private final AtomicInteger modelGeneration = new AtomicInteger(0); // Tracks latest model initialization
 
     // Keep only the newest transcription update while one ML Kit request is running.
     private final Object translationQueueLock = new Object();
@@ -134,58 +135,63 @@ public class MlKitTranslator implements AutoCloseable {
     private void initModelsWithCallback(ReadyListener listener) {
         lock.lock();
         try {
-            requestCounter.incrementAndGet(); // Cancel any in-flight requests
+            final int generation = modelGeneration.incrementAndGet();
+            requestCounter.incrementAndGet(); // Cancel any in-flight translations
             directReady = interReady = finalReady = false;
             useIntermediate = false;
 
             closeTranslators();
 
-            String src = safeLanguage(sourceLang);
-            String tgt = safeLanguage(targetLang);
+            final String src = safeLanguage(sourceLang);
+            final String tgt = safeLanguage(targetLang);
             // Build direct translator
-            TranslatorOptions directOpts = new TranslatorOptions.Builder()
+            directTranslator = Translation.getClient(new TranslatorOptions.Builder()
                     .setSourceLanguage(src)
                     .setTargetLanguage(tgt)
-                    .build();
-            directTranslator = Translation.getClient(directOpts);
+                    .build());
             // Attempt to download model
             directTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
+                        if (!isCurrentGeneration(generation)) return;
                         directReady = true;
                         listener.onReady();
                     })
                     .addOnFailureListener(e -> {
+                        if (!isCurrentGeneration(generation)) return;
                         Log.w(TAG, "Direct model failed, attempting fallback via English", e);
                         setupIntermediate(new ReadyListener() {
                             @Override
                             public void onReady() {
-                                listener.onReady(); // fallback succeeded
+                                if (isCurrentGeneration(generation)) listener.onReady();
                             }
 
                             @Override
                             public void onError(Exception fallbackError) {
-                                // both direct and fallback failed
-                                listener.onError(new TranslationException.DownloadError(e));
+                                if (isCurrentGeneration(generation)) {
+                                    listener.onError(new TranslationException.DownloadError(e));
+                                }
                             }
-                        });
+                        }, generation, src, tgt);
                     });
 
         } finally {
             lock.unlock();
         }
     }
+
     /**
      * Setup intermediate translation path: source->English->target.
      * Called when direct translation is not possible.
      *
      * @param listener Callback for readiness or errors
      */
-    private void setupIntermediate(ReadyListener listener) {
+    private void setupIntermediate(ReadyListener listener, int generation,
+                                   String src, String tgt) {
         lock.lock();
         try {
-            String eng = TranslateLanguage.ENGLISH;
+            if (!isCurrentGeneration(generation)) return;
 
-            String src = safeLanguage(sourceLang);
+            String eng = TranslateLanguage.ENGLISH;
             TranslatorOptions interOpts = new TranslatorOptions.Builder()
                     .setSourceLanguage(src)
                     .setTargetLanguage(eng)
@@ -194,32 +200,44 @@ public class MlKitTranslator implements AutoCloseable {
 
             interTranslator.downloadModelIfNeeded()
                     .addOnSuccessListener(v -> {
+                        if (!isCurrentGeneration(generation)) return;
                         interReady = true;
                         useIntermediate = true;
                         // Prepare English->target final step if needed
-                        if (!eng.equals(safeLanguage(targetLang))) {
+                        if (!eng.equals(tgt)) {
                             TranslatorOptions finalOpts = new TranslatorOptions.Builder()
                                     .setSourceLanguage(eng)
-                                    .setTargetLanguage(safeLanguage(targetLang))
+                                    .setTargetLanguage(tgt)
                                     .build();
-                            directTranslator = Translation.getClient(finalOpts);
+                            lock.lock();
+                            try {
+                                if (!isCurrentGeneration(generation)) return;
+                                directTranslator = Translation.getClient(finalOpts);
+                            } finally {
+                                lock.unlock();
+                            }
 
-                            directTranslator.downloadModelIfNeeded()
+                            final Translator finalTranslator = directTranslator;
+                            finalTranslator.downloadModelIfNeeded()
                                     .addOnSuccessListener(v2 -> {
+                                        if (!isCurrentGeneration(generation)) return;
                                         finalReady = true;
                                         listener.onReady();
                                     })
                                     .addOnFailureListener(e -> {
+                                        if (!isCurrentGeneration(generation)) return;
                                         Log.e(TAG, "Final fallback model (en->target) failed", e);
                                         listener.onError(new TranslationException.NoTranslationPath());
                                     });
 
                         } else {
+                            if (!isCurrentGeneration(generation)) return;
                             finalReady = true;
                             listener.onReady();
                         }
                     })
                     .addOnFailureListener(e2 -> {
+                        if (!isCurrentGeneration(generation)) return;
                         Log.e(TAG, "Intermediate model (source->en) failed", e2);
                         listener.onError(new TranslationException.NoTranslationPath());
                     });
@@ -227,6 +245,10 @@ public class MlKitTranslator implements AutoCloseable {
         } finally {
             lock.unlock();
         }
+    }
+
+    private boolean isCurrentGeneration(int generation) {
+        return modelGeneration.get() == generation;
     }
 
     // ================================================================
@@ -507,6 +529,7 @@ public class MlKitTranslator implements AutoCloseable {
     public void pause() {
         lock.lock();
         try {
+            modelGeneration.incrementAndGet();
             requestCounter.incrementAndGet();
             closeTranslators();
             directReady = interReady = finalReady = false;
@@ -535,6 +558,7 @@ public class MlKitTranslator implements AutoCloseable {
     public void close() {
         lock.lock();
         try {
+            modelGeneration.incrementAndGet();
             requestCounter.incrementAndGet();
             closeTranslators();
         } catch (Exception e) {
