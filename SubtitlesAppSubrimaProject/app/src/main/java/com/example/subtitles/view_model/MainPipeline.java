@@ -60,11 +60,14 @@ public class MainPipeline {
     /// Tracks whether the pipeline is started
     private final AtomicBoolean started = new AtomicBoolean(false);
 
+    /// Tracks whether destroy has been requested
+    private final AtomicBoolean destroyed = new AtomicBoolean(false);
+
     /// Main thread handler for UI updates and scheduling
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     /// Pipeline listener for callbacks
-    private Listener listener;
+    private volatile Listener listener;
 
     /// Map of supported languages for Google Translate / translation validation
     private JSONObject googleLangMap;
@@ -92,7 +95,7 @@ public class MainPipeline {
         if(subtitlesServiceReady) {
             SubtitleOverlayService.updateText("");
         }
-        };
+    };
 
 
     /**
@@ -103,18 +106,18 @@ public class MainPipeline {
      * @throws IOException if loading google_dict.json fails
      */
     public MainPipeline(Context context) throws IOException {
-        this.cxt = context;
+        this.cxt = context.getApplicationContext();
         // Initialize translator
         MlKitTranslator tempTransltor = null;
         try {
-            tempTransltor = new MlKitTranslator(context, srcLang, subtitleLang);
+            tempTransltor = new MlKitTranslator(this.cxt, srcLang, subtitleLang);
         } catch (Exception e) {
             Log.e(TAG, "Translator initialization failed", e);
             notifyError(e.getMessage());
         }
         translator = tempTransltor;
         // Load Google language map from assets
-        try (InputStream is = context.getAssets().open("google_dict.json")) {
+        try (InputStream is = this.cxt.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
             is.read(buffer);
@@ -126,7 +129,7 @@ public class MainPipeline {
             googleLangMap = new JSONObject(); // fail-safe fallback
         }
         // Initialize transcript manager singleton
-        this.transcriber = transcriptManager.getInstance(context, srcLang, googleLangMap);
+        this.transcriber = transcriptManager.getInstance(this.cxt, srcLang, googleLangMap);
 
 
 
@@ -238,6 +241,9 @@ public class MainPipeline {
      * @return Trimmed text
      */
     private String trimToLastNUnits(String text, String langTag, int maxUnits) {
+        if (text == null || text.isEmpty() || maxUnits <= 0) {
+            return "";
+        }
         Locale locale = Locale.forLanguageTag(langTag);
         BreakIterator bi = BreakIterator.getWordInstance(locale);
         bi.setText(text);
@@ -246,7 +252,7 @@ public class MainPipeline {
         int start = bi.first();
         for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
             String piece = text.substring(start, end);
-            if (Character.isLetterOrDigit(piece.codePointAt(0))) {
+            if (!piece.isEmpty() && Character.isLetterOrDigit(piece.codePointAt(0))) {
                 boundaries.add(start);
             }
         }
@@ -270,23 +276,23 @@ public class MainPipeline {
         SharedPreferences prefs = cxt.getSharedPreferences("subrima_prefs", Context.MODE_PRIVATE);
         sourceLang = prefs.getString("pref_source_lang", "auto");
 
-String selectedSubtitleLang =
-        prefs.getString("pref_subtitle_lang", "en");
+        String selectedSubtitleLang =
+                prefs.getString("pref_subtitle_lang", "en");
 
-boolean sourceChanged = false;
+        boolean sourceChanged = false;
 
-if (!sourceLang.equals("auto") && !sourceLang.equals(srcLang)) {
-    srcLang = sourceLang;
-    sourceChanged = true;
-}
+        if (!sourceLang.equals("auto") && !sourceLang.equals(srcLang)) {
+            srcLang = sourceLang;
+            sourceChanged = true;
+        }
 
-boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
+        boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
 
-if (sourceChanged || targetChanged) {
-    if (!setLanguage(selectedSubtitleLang)) {
-        notifyError("problem changing translation languages...");
-    }
-}
+        if (sourceChanged || targetChanged) {
+            if (!setLanguage(selectedSubtitleLang)) {
+                notifyError("problem changing translation languages...");
+            }
+        }
         transcriber.setParmeters();
     }
 
@@ -305,14 +311,25 @@ if (sourceChanged || targetChanged) {
      */
     @RequiresApi(api = Build.VERSION_CODES.Q)
     public synchronized boolean start() {
-        if (!started.compareAndSet(false, true)) {
+        if (destroyed.get()) {
+            Log.w(TAG, "Cannot start destroyed pipeline");
+            return false;
+        }
+        if (started.get()) {
             Log.i(TAG, "Already translating");
             return false;
-            //throw new IllegalStateException("Already translating");
         }
-        setParmeters();
-        boolean transcriberStarted = transcriber.start();
-        if (transcriberStarted) {
+
+        started.set(true);
+        try {
+            setParmeters();
+            boolean transcriberStarted = transcriber.start();
+            if (!transcriberStarted) {
+                started.set(false);
+                Log.w(TAG, "Audio capture failed to start; pipeline state reset");
+                return false;
+            }
+
             if (translator != null) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
                     @Override
@@ -336,11 +353,19 @@ if (sourceChanged || targetChanged) {
             }
             SubtitleOverlayService.showOverlay();
             subtitlesServiceReady = true;
-        } else {
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Pipeline start failed", e);
+            try {
+                transcriber.stop();
+            } catch (Exception cleanupError) {
+                Log.w(TAG, "Failed to clean up transcriber after start failure", cleanupError);
+            }
             started.set(false);
-            Log.w(TAG, "Audio capture failed to start; pipeline state reset");
+            subtitlesServiceReady = false;
+            handler.removeCallbacks(resetRunnable);
+            return false;
         }
-        return transcriberStarted;
     }
 
     /**
@@ -364,7 +389,10 @@ if (sourceChanged || targetChanged) {
     /**
      * Releases all resources and stops services. Call in Activity.onDestroy().
      */
-    public void destroy() {
+    public synchronized void destroy() {
+        if (!destroyed.compareAndSet(false, true)) {
+            return;
+        }
         stop();
         cxt.stopService(new Intent(cxt, SubtitleOverlayService.class));
         transcriber.close();
@@ -375,13 +403,15 @@ if (sourceChanged || targetChanged) {
                 Log.w(TAG, "Error closing Translator", e);
             }
         }
+        listener = null;
         Log.i(TAG, "Pipeline destroyed");
     }
     /**
      * Helper to notify the listener of an error
      */
     private void notifyError(String e) {
-        if (listener != null) listener.onError(e);
+        Listener currentListener = listener;
+        if (currentListener != null) currentListener.onError(e);
     }
 
     /**
