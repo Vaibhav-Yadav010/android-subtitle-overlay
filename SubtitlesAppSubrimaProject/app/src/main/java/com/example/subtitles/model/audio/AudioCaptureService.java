@@ -74,6 +74,7 @@ public class AudioCaptureService extends Service {
         Log.d("AudioCaptureService", "onStartCommand(), startId=" + startId + ", flags=" + flags + ", intent=" + intent);
         if (intent == null) {
             Log.e("AudioCaptureService", "Received null intent in onStartCommand");
+            stopSelf(startId);
             return START_NOT_STICKY;
         }
 
@@ -88,6 +89,7 @@ public class AudioCaptureService extends Service {
                 boolean projectionGranted = capturer.onProjectionGranted(resultCode, projectionData);
                 if (!projectionGranted) {
                     Log.e("AudioCaptureService", "Capturer failed to initialize MediaProjection; service is not ready");
+                    stopSelf(startId);
                     return START_NOT_STICKY;
                 }
                 Log.d("AudioCaptureService", "Projection granted to capturer, sending ACTION_SERVICE_READY");
@@ -98,12 +100,15 @@ public class AudioCaptureService extends Service {
             } catch (SecurityException e) {
                 // Catch any security exceptions in case permissions are missing
                 Log.e("AudioCaptureService", "SecurityException while starting projection", e);
+                stopSelf(startId);
             } catch (RuntimeException e) {
                 // Catch runtime failures while initializing the projection through the capturer.
                 Log.e("AudioCaptureService", "RuntimeException while initializing projection", e);
+                stopSelf(startId);
             }
         } else {
             Log.e("AudioCaptureService", "Invalid projection data or resultCode");
+            stopSelf(startId);
         }
         // Do not restart service automatically if killed
         return START_NOT_STICKY;
@@ -137,7 +142,10 @@ public class AudioCaptureService extends Service {
         super.onDestroy();
         Log.d("AudioCaptureService", "onDestroy()");
         // The capturer owns the MediaProjection and is responsible for stopping it.
-        capturer.onProjectionRevoked();
+        if (capturer != null) {
+            capturer.onProjectionRevoked();
+            capturer = null;
+        }
     }
     /**
      * Returns an IBinder for bound services. This service does not support binding.
