@@ -43,7 +43,7 @@ public class FloatingToggleButtonService extends Service {
     // Notification channel ID (Android O+)
     private static final String CHANNEL_ID = "toggle_overlay_channel";
     // Singleton instance for static access
-    private static FloatingToggleButtonService instance;
+    private static volatile FloatingToggleButtonService instance;
     // Handler on main thread for UI updates
     private final Handler handler = new Handler(Looper.getMainLooper());
     // System window manager for overlay
@@ -96,6 +96,10 @@ public class FloatingToggleButtonService extends Service {
      * @param visible true to show overlay, false to hide
      */
     private void setOverlayVisible(boolean visible) {
+        if (floatingButton == null || windowManager == null || params == null) {
+            Log.w(TAG, "Overlay not initialized; skipping visibility update");
+            return;
+        }
         try {
             if (visible && floatingButton.getParent() == null) {
                 windowManager.addView(floatingButton, params);
@@ -197,7 +201,13 @@ public class FloatingToggleButtonService extends Service {
                         Math.min(newY,
                                 screenHeight - floatingButton.getHeight() - marginPx));
                 // Update overlay position
-                windowManager.updateViewLayout(floatingButton, p);
+                if (floatingButton.getParent() != null) {
+                    try {
+                        windowManager.updateViewLayout(floatingButton, p);
+                    } catch (IllegalArgumentException e) {
+                        Log.w(TAG, "Overlay view not attached, skipping updateLayout()", e);
+                    }
+                }
             }
             return true; // consume touch events
         });
@@ -221,11 +231,19 @@ public class FloatingToggleButtonService extends Service {
         // Remove all pending handler callbacks
         handler.removeCallbacksAndMessages(null);
         // Remove overlay if attached
-        if (floatingButton.getParent() != null) {
-            windowManager.removeViewImmediate(floatingButton);
+        if (floatingButton != null && windowManager != null && floatingButton.getParent() != null) {
+            try {
+                windowManager.removeViewImmediate(floatingButton);
+            } catch (IllegalArgumentException e) {
+                Log.w(TAG, "Overlay view was already detached during destroy", e);
+            }
         }
-        // Clear singleton instance
-        instance = null;
+        floatingButton = null;
+        windowManager = null;
+        params = null;
+        toggleListener = null;
+        // Clear singleton instance only if it still points to this service instance.
+        if (instance == this) instance = null;
     }
 
     /**
@@ -249,6 +267,7 @@ public class FloatingToggleButtonService extends Service {
         DisplayMetrics dm = getResources().getDisplayMetrics();
         screenHeight = dm.heightPixels;
 
+        if (floatingButton == null || params == null) return;
         if (newConfig.orientation ==
                 android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
             // Snap overlay to bottom with margin
