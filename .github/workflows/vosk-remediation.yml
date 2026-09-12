@@ -1,0 +1,88 @@
+name: Vosk Remediation Patch
+
+on:
+  push:
+    branches: ["vosk-remediation-work"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply targeted Vosk lifecycle fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '    private final AtomicBoolean languageSwitchInProgress = new AtomicBoolean(false);\n\n    /** Executor used for async model switching */',
+                  '    private final AtomicBoolean languageSwitchInProgress = new AtomicBoolean(false);\n\n    /** Generation of the latest language-switch request. */\n    private long languageSwitchGeneration = 0L;\n\n    /** True after destroy() has begun; prevents stale async work from reviving the instance. */\n    private boolean destroyed = false;\n\n    /** Executor used for async model switching */'
+              ),
+              (
+                  '    private void switchLanguage(String langCode) {',
+                  '    private void switchLanguage(String langCode, long generation) {'
+              ),
+              (
+                  '            if (modelDir == null || !modelDir.isDirectory()) {\n                Log.e(TAG, "Model directory invalid for lang=" + langCode);\n                return;\n            }\n        } catch (Exception e) {',
+                  '            if (modelDir == null || !modelDir.isDirectory()) {\n                Log.e(TAG, "Model directory invalid for lang=" + langCode);\n                return;\n            }\n        } catch (Exception e) {'
+              ),
+              (
+                  '            return;\n        }\n\n        // Quick same-model guard (thread-safe read of modelPath under lock)',
+                  '            return;\n        }\n\n        synchronized (this) {\n            if (destroyed || generation != languageSwitchGeneration) {\n                Log.i(TAG, "Ignoring stale language switch before model initialization: " + langCode);\n                return;\n            }\n        }\n\n        // Quick same-model guard (thread-safe read of modelPath under lock)'
+              ),
+              (
+                  '            notifyError(e);\n            return;  // old transcription is still running — do not kill it\n        }\n\n        // ── Phase 3: atomic swap',
+                  '            notifyError(e);\n            return;  // old transcription is still running — do not kill it\n        }\n\n        synchronized (this) {\n            if (destroyed || generation != languageSwitchGeneration) {\n                try {\n                    newModel.close();\n                } catch (Exception closeError) {\n                    Log.w(TAG, "Failed to close stale Vosk model", closeError);\n                }\n                Log.i(TAG, "Ignoring stale language switch after model initialization: " + langCode);\n                return;\n            }\n        }\n\n        // ── Phase 3: atomic swap'
+              ),
+              (
+                  '        stop();\n        synchronized (this) {\n            notifyListener("", "new language detected: " + langCode);',
+                  '        stop();\n        synchronized (this) {\n            if (destroyed || generation != languageSwitchGeneration) {\n                try {\n                    newModel.close();\n                } catch (Exception closeError) {\n                    Log.w(TAG, "Failed to close stale Vosk model after stop", closeError);\n                }\n                return;\n            }\n            notifyListener("", "new language detected: " + langCode);'
+              ),
+              (
+                  '            model = newModel;\n            resetTranscriber(true);\n            Log.i(TAG, "Loaded model for language=" + langCode);\n            start();\n            notifyLangChange(currentLang, modelPath);',
+                  '            model = newModel;\n            resetTranscriber(true);\n            if (recognizer == null) {\n                try {\n                    model.close();\n                } catch (Exception closeError) {\n                    Log.w(TAG, "Failed to close model after recognizer initialization failure", closeError);\n                }\n                model = null;\n                modelPath = "";\n                currentLang = "";\n                return;\n            }\n            Log.i(TAG, "Loaded model for language=" + langCode);\n            start();\n            notifyLangChange(currentLang, modelPath);'
+              ),
+              (
+                  '    public void switchLanguageAsync(String langCode) {\n        Log.i(TAG, "[switchLanguage] enter: langCode=\'" + langCode + "\', currentLang=\'" + currentLang + "\'");\n\n        if (langCode == null || langCode.isEmpty()) {\n            Log.i(TAG, "Language unchanged - problem input lang: " + langCode);\n            return;\n        }\n\n        if (!currentLang.isEmpty() && langCode.equals(currentLang)) {\n            Log.i(TAG, "Language unchanged: " + langCode);\n            return;\n        }\n\n        // Try to set the flag; skip if already in progress\n        if (!languageSwitchInProgress.compareAndSet(false, true)) {\n            Log.w(TAG, "Language switch already in progress. Ignored request to switch to: " + langCode);\n            return;\n        }\n\n        if (switchExecutor == null || switchExecutor.isShutdown()) {\n            switchExecutor = Executors.newSingleThreadExecutor();\n        }\n        switchExecutor.submit(() -> {\n            try {\n                switchLanguage(langCode);\n                specialLanguageNotSpacedOut = NOSPACE_LANGS.contains(currentLang);\n            } finally {\n                languageSwitchInProgress.set(false); // Always reset\n            }\n        });\n\n    }',
+                  '    public void switchLanguageAsync(String langCode) {\n        synchronized (this) {\n            Log.i(TAG, "[switchLanguage] enter: langCode=\'" + langCode + "\', currentLang=\'" + currentLang + "\'");\n\n            if (destroyed || langCode == null || langCode.isEmpty()) {\n                Log.i(TAG, "Ignoring language switch request because transcriber is destroyed or input is invalid");\n                return;\n            }\n\n            if (!currentLang.isEmpty() && langCode.equals(currentLang)) {\n                Log.i(TAG, "Language unchanged: " + langCode);\n                return;\n            }\n\n            if (!languageSwitchInProgress.compareAndSet(false, true)) {\n                Log.w(TAG, "Language switch already in progress. Ignored request to switch to: " + langCode);\n                return;\n            }\n\n            final long generation = ++languageSwitchGeneration;\n            if (switchExecutor == null || switchExecutor.isShutdown()) {\n                switchExecutor = Executors.newSingleThreadExecutor();\n            }\n\n            try {\n                switchExecutor.submit(() -> {\n                    try {\n                        switchLanguage(langCode, generation);\n                        synchronized (this) {\n                            if (!destroyed && generation == languageSwitchGeneration) {\n                                specialLanguageNotSpacedOut = NOSPACE_LANGS.contains(currentLang);\n                            }\n                        }\n                    } finally {\n                        languageSwitchInProgress.set(false);\n                    }\n                });\n            } catch (RuntimeException e) {\n                languageSwitchInProgress.set(false);\n                notifyError(e);\n            }\n        }\n    }'
+              ),
+              (
+                  '    public void acceptAudio(TaggedAudioChunk chunk) {\n        if (!running.get() || recognizer == null) return;\n\n        // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.\n        // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.\n        // Audio is kept flowing directly into the Vosk queue for low-latency transcription.\n\n\n        if (!audioQueue.offer(chunk)) {\n    audioQueue.poll();\n    audioQueue.offer(chunk);\n}\n    }',
+                  '    public void acceptAudio(TaggedAudioChunk chunk) {\n        synchronized (this) {\n            if (!running.get() || recognizer == null || destroyed) return;\n\n            // Speaker-change ONNX inference is intentionally disabled in the real-time audio path.\n            // It performs a synchronous 1-second model inference every 250 ms and can block audio delivery.\n            // Audio is kept flowing directly into the Vosk queue for low-latency transcription.\n            if (!audioQueue.offer(chunk)) {\n                audioQueue.poll();\n                audioQueue.offer(chunk);\n            }\n        }\n    }'
+              ),
+              (
+                  '    public void destroy() {\n        stop();',
+                  '    public synchronized void destroy() {\n        destroyed = true;\n        ++languageSwitchGeneration;\n        stop();'
+              )
+          ]
+
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one match for patch block, found {text.count(old)}: {old[:100]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          print("Targeted Vosk patch applied successfully")
+          PY
+
+      - name: Validate patch
+        run: |
+          git diff --check
+          git diff -- SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java
+
+      - name: Commit and push patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/transcription/core/VoskStreamTranscriber.java
+          git commit -m "fix: harden Vosk language switch lifecycle"
+          git push
