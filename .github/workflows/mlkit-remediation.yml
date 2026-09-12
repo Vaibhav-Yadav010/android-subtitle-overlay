@@ -1,0 +1,243 @@
+name: MlKit remediation
+
+on:
+  push:
+    branches: [ mlkit-remediation-work ]
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch generation guards
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java')
+          s = p.read_text()
+          old = '    private final AtomicInteger requestCounter = new AtomicInteger(0); // Tracks latest request ID\n'
+          new = old + '    private final AtomicInteger modelGeneration = new AtomicInteger(0); // Tracks latest model initialization\n'
+          assert old in s and 'modelGeneration' not in s
+          s = s.replace(old, new, 1)
+
+          old = '''        lock.lock();
+        try {
+            requestCounter.incrementAndGet(); // Cancel any in-flight requests
+            directReady = interReady = finalReady = false;
+            useIntermediate = false;
+
+            closeTranslators();
+
+            String src = safeLanguage(sourceLang);
+            String tgt = safeLanguage(targetLang);
+'''
+          new = '''        lock.lock();
+        try {
+            final int generation = modelGeneration.incrementAndGet();
+            requestCounter.incrementAndGet(); // Cancel any in-flight translations
+            directReady = interReady = finalReady = false;
+            useIntermediate = false;
+
+            closeTranslators();
+
+            String src = safeLanguage(sourceLang);
+            String tgt = safeLanguage(targetLang);
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''            directTranslator.downloadModelIfNeeded()
+                    .addOnSuccessListener(v -> {
+                        directReady = true;
+                        listener.onReady();
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.w(TAG, "Direct model failed, attempting fallback via English", e);
+                        setupIntermediate(new ReadyListener() {
+                            @Override
+                            public void onReady() {
+                                listener.onReady(); // fallback succeeded
+                            }
+
+                            @Override
+                            public void onError(Exception fallbackError) {
+                                // both direct and fallback failed
+                                listener.onError(new TranslationException.DownloadError(e));
+                            }
+                        });
+                    });
+'''
+          new = '''            directTranslator.downloadModelIfNeeded()
+                    .addOnSuccessListener(v -> {
+                        if (!isCurrentGeneration(generation)) {
+                            return;
+                        }
+                        directReady = true;
+                        listener.onReady();
+                    })
+                    .addOnFailureListener(e -> {
+                        if (!isCurrentGeneration(generation)) {
+                            return;
+                        }
+                        Log.w(TAG, "Direct model failed, attempting fallback via English", e);
+                        setupIntermediate(new ReadyListener() {
+                            @Override
+                            public void onReady() {
+                                if (isCurrentGeneration(generation)) {
+                                    listener.onReady(); // fallback succeeded
+                                }
+                            }
+
+                            @Override
+                            public void onError(Exception fallbackError) {
+                                if (isCurrentGeneration(generation)) {
+                                    // both direct and fallback failed
+                                    listener.onError(new TranslationException.DownloadError(e));
+                                }
+                            }
+                        }, generation, src, tgt);
+                    });
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    private void setupIntermediate(ReadyListener listener) {
+        lock.lock();
+        try {
+            String eng = TranslateLanguage.ENGLISH;
+
+            String src = safeLanguage(sourceLang);
+'''
+          new = '''    private void setupIntermediate(ReadyListener listener, int generation,
+                                   String src, String tgt) {
+        lock.lock();
+        try {
+            if (modelGeneration.get() != generation) {
+                return;
+            }
+            String eng = TranslateLanguage.ENGLISH;
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''            interTranslator.downloadModelIfNeeded()
+                    .addOnSuccessListener(v -> {
+                        interReady = true;
+                        useIntermediate = true;
+                        // Prepare English->target final step if needed
+                        if (!eng.equals(safeLanguage(targetLang))) {
+                            TranslatorOptions finalOpts = new TranslatorOptions.Builder()
+                                    .setSourceLanguage(eng)
+                                    .setTargetLanguage(safeLanguage(targetLang))
+                                    .build();
+                            directTranslator = Translation.getClient(finalOpts);
+
+                            directTranslator.downloadModelIfNeeded()
+                                    .addOnSuccessListener(v2 -> {
+                                        finalReady = true;
+                                        listener.onReady();
+                                    })
+                                    .addOnFailureListener(e -> {
+                                        Log.e(TAG, "Final fallback model (en->target) failed", e);
+                                        listener.onError(new TranslationException.NoTranslationPath());
+                                    });
+
+                        } else {
+                            finalReady = true;
+                            listener.onReady();
+                        }
+                    })
+                    .addOnFailureListener(e2 -> {
+                        Log.e(TAG, "Intermediate model (source->en) failed", e2);
+                        listener.onError(new TranslationException.NoTranslationPath());
+                    });
+'''
+          new = '''            interTranslator.downloadModelIfNeeded()
+                    .addOnSuccessListener(v -> {
+                        if (!isCurrentGeneration(generation)) {
+                            return;
+                        }
+                        interReady = true;
+                        useIntermediate = true;
+                        // Prepare English->target final step if needed
+                        if (!eng.equals(tgt)) {
+                            TranslatorOptions finalOpts = new TranslatorOptions.Builder()
+                                    .setSourceLanguage(eng)
+                                    .setTargetLanguage(tgt)
+                                    .build();
+                            lock.lock();
+                            try {
+                                if (!isCurrentGeneration(generation)) {
+                                    return;
+                                }
+                                directTranslator = Translation.getClient(finalOpts);
+                            } finally {
+                                lock.unlock();
+                            }
+
+                            directTranslator.downloadModelIfNeeded()
+                                    .addOnSuccessListener(v2 -> {
+                                        if (!isCurrentGeneration(generation)) {
+                                            return;
+                                        }
+                                        finalReady = true;
+                                        listener.onReady();
+                                    })
+                                    .addOnFailureListener(e -> {
+                                        if (!isCurrentGeneration(generation)) {
+                                            return;
+                                        }
+                                        Log.e(TAG, "Final fallback model (en->target) failed", e);
+                                        listener.onError(new TranslationException.NoTranslationPath());
+                                    });
+
+                        } else {
+                            if (!isCurrentGeneration(generation)) {
+                                return;
+                            }
+                            finalReady = true;
+                            listener.onReady();
+                        }
+                    })
+                    .addOnFailureListener(e2 -> {
+                        if (!isCurrentGeneration(generation)) {
+                            return;
+                        }
+                        Log.e(TAG, "Intermediate model (source->en) failed", e2);
+                        listener.onError(new TranslationException.NoTranslationPath());
+                    });
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          marker = '''    // ================================================================
+    // Language safety & getters
+    // ================================================================
+'''
+          helper = '''    private boolean isCurrentGeneration(int generation) {
+        return modelGeneration.get() == generation;
+    }
+
+'''
+          assert marker in s and helper not in s
+          s = s.replace(marker, helper + marker, 1)
+
+          old = '            requestCounter.incrementAndGet();\n            closeTranslators();\n'
+          new = '            modelGeneration.incrementAndGet();\n            requestCounter.incrementAndGet();\n            closeTranslators();\n'
+          assert old in s
+          s = s.replace(old, new, 2)
+
+          p.write_text(s)
+          PY
+          git diff --check
+          git diff -- SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java
+          git status --short
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add SubtitlesAppSubrimaProject/app/src/main/java/com/example/subtitles/model/translation/MlKitTranslator.java
+          git commit -m 'fix: guard ML Kit model initialization generations'
+          git push
