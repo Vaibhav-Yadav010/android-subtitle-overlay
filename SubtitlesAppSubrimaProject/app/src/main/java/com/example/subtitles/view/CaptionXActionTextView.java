@@ -77,15 +77,21 @@ public class CaptionXActionTextView extends AppCompatTextView {
                         Toast.LENGTH_SHORT).show();
                 break;
             case "audio_system":
-                View startButton = getRootView().findViewById(R.id.toggleMainButton);
-                if (startButton != null) startButton.performClick();
+                // Selecting an audio source must never start the captioning pipeline.
+                // The current build's capture engine is system-audio playback capture.
+                getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString("pref_audio_source", "system")
+                        .apply();
+                Toast.makeText(getContext(), "System Audio selected.", Toast.LENGTH_SHORT).show();
                 break;
             case "engine_local":
                 Toast.makeText(getContext(), "Local Vosk is active.", Toast.LENGTH_SHORT).show();
                 break;
             case "engine_remote":
                 Toast.makeText(getContext(),
-                        "Remote Whisper is not enabled in this build.", Toast.LENGTH_SHORT).show();
+                        "Remote Whisper is not enabled in this build.",
+                        Toast.LENGTH_SHORT).show();
                 break;
             case "permission_microphone":
                 requestMicrophonePermission();
