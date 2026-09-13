@@ -97,7 +97,6 @@ public class MainPipeline {
         }
     };
 
-
     /**
      * Constructs the MainPipeline instance.
      * Initializes translator, loads language map, and sets up the transcriptManager listener.
@@ -107,7 +106,6 @@ public class MainPipeline {
      */
     public MainPipeline(Context context) throws IOException {
         this.cxt = context.getApplicationContext();
-        // Initialize translator
         MlKitTranslator tempTransltor = null;
         try {
             tempTransltor = new MlKitTranslator(this.cxt, srcLang, subtitleLang);
@@ -116,7 +114,6 @@ public class MainPipeline {
             notifyError(e.getMessage());
         }
         translator = tempTransltor;
-        // Load Google language map from assets
         try (InputStream is = this.cxt.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
@@ -126,36 +123,25 @@ public class MainPipeline {
             Log.d(TAG, "Google language map loaded with " + googleLangMap.length() + " entries");
         } catch (IOException | JSONException e) {
             Log.e(TAG, "Failed to load google_dict.json", e);
-            googleLangMap = new JSONObject(); // fail-safe fallback
+            googleLangMap = new JSONObject();
         }
-        // Initialize transcript manager singleton
         this.transcriber = transcriptManager.getInstance(this.cxt, srcLang, googleLangMap);
 
-
-
-        // Set listener for transcription events
         this.transcriber.setListener(new transcriptManager.Listener() {
             @Override
             public void onTranscriptionUpdate(String lastSourceSentence, String fullText) {
-                // Cancel any pending reset operations
                 handler.removeCallbacks(resetRunnable);
-
-                // Update internal transcript buffer
                 transcript.setLength(0);
                 transcript.append(fullText);
-                // Notify listener
                 if (listener != null) {
                     listener.onTranscriptionUpdate(lastSourceSentence + "\n|||||||\n" + fullText);
                 }
-                // Update subtitle overlay based on translation availability
                 if (fullText.isEmpty()) {
                     if(subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(fullText);
                     }
                 } else if (translator != null && !srcLang.equals(subtitleLang)) {
-                    // Translation is enabled and needed
                     if (!translator.isReady()) {
-                        //Log.d(TAG, "got transcript but translate is not ready");
                         if (listener != null) {
                             listener.onTransltionUpdate("Loading translation…");
                         }
@@ -165,8 +151,6 @@ public class MainPipeline {
                                 @Override
                                 public void onResult(String fullTranslated, String translated) {
                                     String displayText = trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
-
-                                    // Update overlay
                                     if (!translated.isEmpty() && subtitlesServiceReady) {
                                         SubtitleOverlayService.updateText(displayText);
                                     }
@@ -182,13 +166,10 @@ public class MainPipeline {
                             });
                         } catch (Exception e) {
                             Log.e(TAG, "Translator translate failed: ", e);
-
                         }
                     }
                 } else {
-                    // No translation needed
                     String displayText = trimToLastNUnits(fullText, subtitleLang, MAX_SUBTITLES_WORDS);
-
                     Log.d("Pipeline", "NO Translated - Just Transcript: " + displayText);
                     if (!displayText.isEmpty() && subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(displayText);
@@ -197,7 +178,6 @@ public class MainPipeline {
                         listener.onTransltionUpdate("No translation needed");
                     }
                 }
-                // Schedule reset after 2 seconds
                 handler.postDelayed(resetRunnable, 2000);
             }
 
@@ -227,19 +207,9 @@ public class MainPipeline {
                     listener.onLanguageDetected("Language: " + lang + " : " + lang + "(V)");
                 }
             }
-
         });
-
-
     }
-    /**
-     * Trims text to the last N word units, to prevent overly long subtitles.
-     *
-     * @param text     The original text
-     * @param langTag  Language tag for proper word segmentation
-     * @param maxUnits Maximum number of words to retain
-     * @return Trimmed text
-     */
+
     private String trimToLastNUnits(String text, String langTag, int maxUnits) {
         if (text == null || text.isEmpty() || maxUnits <= 0) {
             return "";
@@ -247,7 +217,6 @@ public class MainPipeline {
         Locale locale = Locale.forLanguageTag(langTag);
         BreakIterator bi = BreakIterator.getWordInstance(locale);
         bi.setText(text);
-
         List<Integer> boundaries = new ArrayList<>();
         int start = bi.first();
         for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
@@ -257,7 +226,6 @@ public class MainPipeline {
             }
         }
         boundaries.add(text.length());
-
         int total = boundaries.size() - 1;
         if (total <= maxUnits) {
             return text;
@@ -265,8 +233,11 @@ public class MainPipeline {
         int cutIndex = boundaries.get(total - maxUnits);
         return text.substring(cutIndex).trim();
     }
+
     /**
-     * Updates pipeline parameters from SharedPreferences
+     * Updates pipeline parameters from SharedPreferences.
+     * An explicit source-language change is committed to the pipeline only after
+     * transcriptManager/Vosk reports that the requested model is active.
      */
     public void setParmeters() {
         if (!started.get()) {
@@ -274,41 +245,32 @@ public class MainPipeline {
             return;
         }
         SharedPreferences prefs = cxt.getSharedPreferences("subrima_prefs", Context.MODE_PRIVATE);
-        sourceLang = prefs.getString("pref_source_lang", "auto");
+        String selectedSourceLang = prefs.getString("pref_source_lang", "auto");
+        sourceLang = selectedSourceLang;
 
-        String selectedSubtitleLang =
-                prefs.getString("pref_subtitle_lang", "en");
-
-        boolean sourceChanged = false;
-
-        if (!sourceLang.equals("auto") && !sourceLang.equals(srcLang)) {
-            srcLang = sourceLang;
-            sourceChanged = true;
-        }
-
+        String selectedSubtitleLang = prefs.getString("pref_subtitle_lang", "en");
+        boolean sourceChanged = !selectedSourceLang.equals("auto") && !selectedSourceLang.equals(srcLang);
         boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
 
-        if (sourceChanged || targetChanged) {
+        // transcriptManager owns the Vosk model switch. Do not change srcLang here;
+        // onModelTranscriptChange() commits it after the model actually changes.
+        if (targetChanged || (sourceChanged && selectedSourceLang.equals(srcLang))) {
             if (!setLanguage(selectedSubtitleLang)) {
                 notifyError("problem changing translation languages...");
             }
         }
         transcriber.setParmeters();
+
+        // If only the target changed, source and target can be applied immediately.
+        if (!sourceChanged && targetChanged) {
+            // setLanguage() above already committed subtitleLang on success.
+        }
     }
 
-
-    /**
-     * Sets the pipeline listener for UI updates or error handling
-     */
     public void setListener(Listener l) {
         this.listener = l;
     }
 
-    /**
-     * Starts audio capture, transcription, translation, and overlay.
-     *
-     * @return true if audio capture started successfully
-     */
     @RequiresApi(api = Build.VERSION_CODES.Q)
     public synchronized boolean start() {
         if (destroyed.get()) {
@@ -344,7 +306,6 @@ public class MainPipeline {
                     }
                 });
             }
-            // Start subtitle overlay service
             Intent overlayIntent = new Intent(cxt, SubtitleOverlayService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 cxt.startForegroundService(overlayIntent);
@@ -368,9 +329,6 @@ public class MainPipeline {
         }
     }
 
-    /**
-     * Stops audio capture, transcription, translation, and overlay.
-     */
     public synchronized void stop() {
         if (!started.get()) return;
         handler.removeCallbacks(resetRunnable);
@@ -386,9 +344,6 @@ public class MainPipeline {
         started.set(false);
     }
 
-    /**
-     * Releases all resources and stops services. Call in Activity.onDestroy().
-     */
     public synchronized void destroy() {
         if (!destroyed.compareAndSet(false, true)) {
             return;
@@ -406,20 +361,12 @@ public class MainPipeline {
         listener = null;
         Log.i(TAG, "Pipeline destroyed");
     }
-    /**
-     * Helper to notify the listener of an error
-     */
+
     private void notifyError(String e) {
         Listener currentListener = listener;
         if (currentListener != null) currentListener.onError(e);
     }
 
-    /**
-     * Switches the subtitle translation language at runtime.
-     *
-     * @param newDstLang Target language
-     * @return true if language switch succeeded
-     */
     public boolean setLanguage(String newDstLang) {
         try {
             if (translator != null) {
@@ -441,16 +388,11 @@ public class MainPipeline {
             return false;
         }
     }
-    /**
-     * Listener interface for pipeline events
-     */
+
     public interface Listener {
         void onLanguageDetected(String lang);
-
         void onTranscriptionUpdate(String fullText);
-
         void onTransltionUpdate(String translate);
-
         void onError(String e);
     }
 
