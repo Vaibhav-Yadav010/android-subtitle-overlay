@@ -44,10 +44,6 @@ public class MainPipeline {
     private String srcLang = "en";
     private String subtitleLang = "en";
     private boolean subtitlesServiceReady = false;
-
-    // Translation lifecycle is kept separate from transcription lifecycle.
-    // The first pipeline start already has a translator initialized by the constructor;
-    // calling resume() again there races with automatic source-language detection.
     private boolean translatorNeedsResume = false;
 
     private String pendingTranslationSentence = "";
@@ -66,6 +62,7 @@ public class MainPipeline {
                 handler.postDelayed(this, TRANSLATION_RETRY_DELAY_MS);
             } else {
                 translationRetryCount = 0;
+                showOverlayStatus("Translation model is still loading…");
             }
         }
     };
@@ -91,6 +88,7 @@ public class MainPipeline {
             notifyError(e.getMessage());
         }
         translator = tempTransltor;
+
         try (InputStream is = this.cxt.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
@@ -102,6 +100,7 @@ public class MainPipeline {
             Log.e(TAG, "Failed to load google_dict.json", e);
             googleLangMap = new JSONObject();
         }
+
         this.transcriber = transcriptManager.getInstance(this.cxt, srcLang, googleLangMap);
         this.transcriber.setListener(new transcriptManager.Listener() {
             @Override
@@ -129,16 +128,13 @@ public class MainPipeline {
                     if (translator.isReady()) {
                         translatePendingText();
                     } else {
-                        // Keep the live source visible while the dynamic ML Kit model is loading.
-                        if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
-                            SubtitleOverlayService.updateText(rawDisplayText);
-                        }
+                        // Do not pretend untranslated source text is a translation.
+                        showOverlayStatus("Preparing translation…");
                         if (listener != null) listener.onTransltionUpdate("Loading translation…");
                         handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
                     }
                 } else {
                     String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
-                    Log.d(TAG, "NO Translated - Just Transcript: " + rawDisplayText);
                     if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(rawDisplayText);
                     }
@@ -160,7 +156,8 @@ public class MainPipeline {
             public void onModelTranscriptChange(String newLang) {
                 if (!newLang.isEmpty() && !newLang.equals(srcLang)) {
                     srcLang = newLang;
-                    Log.i(TAG, "Vosk source language changed to " + newLang + "; rebuilding translator");
+                    Log.i(TAG, "Vosk source language changed to " + newLang);
+                    showOverlayStatus("Preparing translation…");
                     if (!setLanguage(subtitleLang)) {
                         notifyError("Unable to initialize translation for source language: " + newLang);
                     }
@@ -169,7 +166,25 @@ public class MainPipeline {
 
             @Override
             public void onLanguageDetected(String lang) {
-                if (listener != null) listener.onLanguageDetected("Language: " + lang + " : " + lang + "(X)");
+                if (listener != null) {
+                    listener.onLanguageDetected("Language: " + lang + " : " + lang + "(X)");
+                }
+
+                // IMPORTANT: Silero detects the language before Vosk finishes
+                // downloading/loading the new Vosk model. Start the ML Kit model
+                // download immediately so the two slow operations overlap.
+                if (started.get() && "auto".equals(sourceLang) && lang != null && !lang.isEmpty()) {
+                    String detectedLang = mapGoogleLanguage(lang);
+                    if (!detectedLang.isEmpty() && !detectedLang.equals(srcLang)) {
+                        srcLang = detectedLang;
+                        if (!srcLang.equals(subtitleLang) && translator != null) {
+                            showOverlayStatus("Preparing translation…");
+                            if (!setLanguage(subtitleLang)) {
+                                notifyError("Unable to initialize translation " + srcLang + " -> " + subtitleLang);
+                            }
+                        }
+                    }
+                }
             }
 
             @Override
@@ -177,6 +192,22 @@ public class MainPipeline {
                 if (listener != null) listener.onLanguageDetected("Language: " + lang + " : " + lang + "(V)");
             }
         });
+    }
+
+    private String mapGoogleLanguage(String lang) {
+        if (lang == null || lang.trim().isEmpty()) return "";
+        String normalized = lang.trim();
+        if (googleLangMap != null && googleLangMap.has(normalized)) {
+            String mapped = googleLangMap.optString(normalized, normalized);
+            if (mapped != null && !mapped.trim().isEmpty()) return mapped.trim();
+        }
+        return normalized;
+    }
+
+    private void showOverlayStatus(String status) {
+        if (subtitlesServiceReady && started.get()) {
+            SubtitleOverlayService.updateText(status);
+        }
     }
 
     private void translatePendingText() {
@@ -191,8 +222,6 @@ public class MainPipeline {
         handler.removeCallbacks(translationRetryRunnable);
         translationRetryCount = 0;
 
-        // Keep the previous completed sentence as context for the translator.
-        // MlKitTranslator currently accepts the combined context explicitly through text.
         final String translationInput = lastSourceSentence == null || lastSourceSentence.trim().isEmpty()
                 ? fullText.trim()
                 : lastSourceSentence.trim() + "\n" + fullText.trim();
@@ -201,6 +230,7 @@ public class MainPipeline {
             translator.translate("", translationInput, new MlKitTranslator.TranslationCallback() {
                 @Override
                 public void onResult(String fullTranslated, String translated) {
+                    if (!started.get()) return;
                     String displayText = translated == null || translated.isEmpty()
                             ? rawDisplayText
                             : trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
@@ -213,18 +243,15 @@ public class MainPipeline {
 
                 @Override
                 public void onError(MlKitTranslator.TranslationException e) {
+                    if (!started.get()) return;
                     Log.e(TAG, "Translation error", e);
-                    if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
-                        SubtitleOverlayService.updateText(rawDisplayText);
-                    }
-                    if (listener != null) listener.onTransltionUpdate("Translation failed; showing source text");
+                    showOverlayStatus("Translation unavailable — retrying…");
+                    if (listener != null) listener.onTransltionUpdate("Translation failed; retrying");
                 }
             });
         } catch (Exception e) {
             Log.e(TAG, "Translator translate failed", e);
-            if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
-                SubtitleOverlayService.updateText(rawDisplayText);
-            }
+            showOverlayStatus("Translation unavailable — retrying…");
         }
     }
 
@@ -246,10 +273,6 @@ public class MainPipeline {
         return text.substring(cutIndex).trim();
     }
 
-    /**
-     * Applies the current SharedPreferences language configuration.
-     * Returns true when it initiated a translator reconfiguration.
-     */
     public boolean setParmeters() {
         if (!started.get()) {
             Log.i(TAG, "pipeline not working (running) yet there is no need to do it now...");
@@ -274,9 +297,7 @@ public class MainPipeline {
                 notifyError("Unable to initialize translation " + srcLang + " -> " + selectedTarget);
             }
         }
-        if (translatorReconfigured) {
-            translatorNeedsResume = false;
-        }
+        if (translatorReconfigured) translatorNeedsResume = false;
 
         transcriber.setParmeters();
         return translatorReconfigured;
@@ -307,8 +328,6 @@ public class MainPipeline {
                 return false;
             }
 
-            // Do not resume on the first start: the constructor already initialized ML Kit.
-            // On subsequent starts, resume only if preferences did not already trigger a rebuild.
             if (translator != null && translatorNeedsResume && !translatorReconfigured) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
                     @Override public void onReady() {
@@ -328,6 +347,10 @@ public class MainPipeline {
             else cxt.startService(overlayIntent);
             subtitlesServiceReady = true;
             SubtitleOverlayService.showOverlay();
+
+            if (!srcLang.equals(subtitleLang) || "auto".equals(sourceLang)) {
+                showOverlayStatus("auto".equals(sourceLang) ? "Detecting language…" : "Preparing translation…");
+            }
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Pipeline start failed", e);
@@ -383,14 +406,9 @@ public class MainPipeline {
                     subtitleLang = newDstLang;
                     Log.i(TAG, "Successfully switched target language to: " + newDstLang);
                 } else {
-                    // setLanguages() returns false when the pair is already configured.
-                    // Treat that as success when the requested pair already matches.
-                    if (srcLang.equals(newDstLang) && subtitleLang.equals(newDstLang)) {
-                        return true;
-                    }
                     Log.w(TAG, "Failed to switch target language to: " + newDstLang);
                 }
-                return success || (srcLang.equals(newDstLang) && subtitleLang.equals(newDstLang));
+                return success;
             }
             Log.w(TAG, "Translator instance is null – cannot switch language");
             return false;
