@@ -50,6 +50,12 @@ public class WhisperContext {
     /** Guards against double initialization */
     private static final AtomicBoolean initialized = new AtomicBoolean(false);
 
+    /** Guards against a context being acquired while native cleanup is in progress. */
+    private static final AtomicBoolean closing = new AtomicBoolean(false);
+
+    /** Guards against repeated close calls on the same instance. */
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+
     /**
      * Private constructor.
      */
@@ -71,6 +77,9 @@ public class WhisperContext {
         if (instance != null) {
             Log.i(TAG, "WhisperContext already initialized.");
             return;
+        }
+        if (closing.get()) {
+            throw new IOException("WhisperContext is still closing");
         }
         if (!initialized.compareAndSet(false, true)) {
             Log.i(TAG, "WhisperContext initialization already in progress.");
@@ -106,6 +115,9 @@ public class WhisperContext {
      * init() must be called first.
      */
     public static synchronized WhisperContext getInstance(Context ctx, String modelFileName) {
+        if (closing.get()) {
+            throw new IllegalStateException("WhisperContext is still closing");
+        }
         if (instance == null) {
             Log.i(TAG,"WhisperContext not initialized. Call init() first.");
             try {
@@ -148,6 +160,9 @@ public class WhisperContext {
      */
     public List<transcriptSegment> transcribeWithTime(final float[] audioData)
             throws ExecutionException, InterruptedException {
+        if (closed.get()) {
+            throw new IllegalStateException("WhisperContext is closed");
+        }
         return executor.submit(new Callable<List<transcriptSegment>>() {
             @Override
             public List<transcriptSegment> call() {
@@ -171,6 +186,9 @@ public class WhisperContext {
      * @return detected language of last transcription
      */
     public String detectLanguage() {
+        if (closed.get()) {
+            throw new IllegalStateException("WhisperContext is closed");
+        }
         return WhisperLib.getDetectedLanguage(ctxPtr);
     }
 
@@ -180,14 +198,26 @@ public class WhisperContext {
 
     /**
      * Frees native resources and shuts down executor.
+     *
+     * The class lock is held while the executor drains, so getInstance()
+     * cannot hand out this context or initialize a replacement concurrently
+     * with native cleanup.
      */
     public void close() throws ExecutionException, InterruptedException {
-        executor.submit(() -> WhisperLib.freeContext(ctxPtr)).get();
-        executor.shutdown();
         synchronized (WhisperContext.class) {
-            if (instance == this) {
-                instance = null;
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            closing.set(true);
+            try {
+                executor.submit(() -> WhisperLib.freeContext(ctxPtr)).get();
+            } finally {
+                executor.shutdown();
+                if (instance == this) {
+                    instance = null;
+                }
                 initialized.set(false);
+                closing.set(false);
             }
         }
         Log.i(TAG, "WhisperContext closed");
