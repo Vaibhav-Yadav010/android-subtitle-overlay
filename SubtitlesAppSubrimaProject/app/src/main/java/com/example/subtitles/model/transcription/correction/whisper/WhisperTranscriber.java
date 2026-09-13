@@ -52,6 +52,7 @@ public class WhisperTranscriber {
     private Whisperlistener listener;
     private final Handler mainHandler;
     private final AtomicBoolean running;
+    private final AtomicBoolean closing = new AtomicBoolean(false);
 
     private String lang = "";
     private long counterProcessing;
@@ -76,7 +77,7 @@ public class WhisperTranscriber {
     }
 
     public void appendAudio(float[] samples) {
-        if (samples == null || samples.length == 0 || !running.get()) return;
+        if (samples == null || samples.length == 0 || !running.get() || closing.get()) return;
         float[] copy = samples.clone();
         if (!audioQueue.offer(copy)) {
             // Drop the oldest queued chunk to keep latency bounded rather than accumulating stale audio.
@@ -181,6 +182,9 @@ public class WhisperTranscriber {
     }
 
     public synchronized void start() {
+        if (closing.get()) {
+            throw new IllegalStateException("WhisperTranscriber is closing");
+        }
         if (running.get()) return;
         if (processingThread != null && processingThread.isAlive()) {
             throw new IllegalStateException("Cannot start Whisper while previous worker is still stopping");
@@ -231,42 +235,43 @@ public class WhisperTranscriber {
     }
 
     public void close() {
-        Thread worker;
-        synchronized (this) {
-            if (!running.get() && processingThread == null && ctx == null) {
+        synchronized (WhisperTranscriber.class) {
+            if (!closing.compareAndSet(false, true)) {
                 return;
             }
-            running.set(false);
-            isDone = true;
-            worker = processingThread;
-            if (worker != null) {
-                worker.interrupt();
-            }
-        }
 
-        if (worker != null && Thread.currentThread() != worker) {
-            joinUninterruptibly(worker);
-        }
-
-        synchronized (this) {
-            if (processingThread == worker) {
-                processingThread = null;
-            }
-            resetAll();
-        }
-
-        WhisperContext context = ctx;
-        try {
-            if (context != null) {
-                context.close();
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to close WhisperContext", e);
-        } finally {
+            Thread worker;
             synchronized (this) {
-                ctx = null;
+                running.set(false);
+                isDone = true;
+                worker = processingThread;
+                if (worker != null) {
+                    worker.interrupt();
+                }
             }
-            synchronized (WhisperTranscriber.class) {
+
+            if (worker != null && Thread.currentThread() != worker) {
+                joinUninterruptibly(worker);
+            }
+
+            synchronized (this) {
+                if (processingThread == worker) {
+                    processingThread = null;
+                }
+                resetAll();
+            }
+
+            WhisperContext context = ctx;
+            try {
+                if (context != null) {
+                    context.close();
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to close WhisperContext", e);
+            } finally {
+                synchronized (this) {
+                    ctx = null;
+                }
                 if (instance == this) {
                     instance = null;
                 }
