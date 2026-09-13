@@ -160,36 +160,40 @@ public class WhisperContext {
      */
     public List<transcriptSegment> transcribeWithTime(final float[] audioData)
             throws ExecutionException, InterruptedException {
-        if (closed.get()) {
-            throw new IllegalStateException("WhisperContext is closed");
-        }
-        return executor.submit(new Callable<List<transcriptSegment>>() {
-            @Override
-            public List<transcriptSegment> call() {
-                // Run native inference
-                WhisperLib.fullTranscribe(ctxPtr, pickThreadCount(), audioData);
-                int n = WhisperLib.getTextSegmentCount(ctxPtr);
-                List<transcriptSegment> segs = new ArrayList<>(n);
-                // Convert native segments
-                for (int i = 0; i < n; i++) {
-                    // Whisper time unit is 10ms
-                    long t0 = WhisperLib.getTextSegmentT0(ctxPtr, i)*10;
-                    long t1 = WhisperLib.getTextSegmentT1(ctxPtr, i)*10;
-                    String txt = WhisperLib.getTextSegment(ctxPtr, i);
-                    segs.add(new transcriptSegment(t0, t1, txt));
-                }
-                return segs;
+        synchronized (WhisperContext.class) {
+            if (closed.get()) {
+                throw new IllegalStateException("WhisperContext is closed");
             }
-        }).get();
+            return executor.submit(new Callable<List<transcriptSegment>>() {
+                @Override
+                public List<transcriptSegment> call() {
+                    // Run native inference
+                    WhisperLib.fullTranscribe(ctxPtr, pickThreadCount(), audioData);
+                    int n = WhisperLib.getTextSegmentCount(ctxPtr);
+                    List<transcriptSegment> segs = new ArrayList<>(n);
+                    // Convert native segments
+                    for (int i = 0; i < n; i++) {
+                        // Whisper time unit is 10ms
+                        long t0 = WhisperLib.getTextSegmentT0(ctxPtr, i)*10;
+                        long t1 = WhisperLib.getTextSegmentT1(ctxPtr, i)*10;
+                        String txt = WhisperLib.getTextSegment(ctxPtr, i);
+                        segs.add(new transcriptSegment(t0, t1, txt));
+                    }
+                    return segs;
+                }
+            }).get();
+        }
     }
     /**
      * @return detected language of last transcription
      */
     public String detectLanguage() {
-        if (closed.get()) {
-            throw new IllegalStateException("WhisperContext is closed");
+        synchronized (WhisperContext.class) {
+            if (closed.get()) {
+                throw new IllegalStateException("WhisperContext is closed");
+            }
+            return WhisperLib.getDetectedLanguage(ctxPtr);
         }
-        return WhisperLib.getDetectedLanguage(ctxPtr);
     }
 
     // ================================================================
@@ -199,9 +203,8 @@ public class WhisperContext {
     /**
      * Frees native resources and shuts down executor.
      *
-     * The class lock is held while the executor drains, so getInstance()
-     * cannot hand out this context or initialize a replacement concurrently
-     * with native cleanup.
+     * The class lock is held while the executor drains, so native callers
+     * cannot race cleanup or acquire a replacement context concurrently.
      */
     public void close() throws ExecutionException, InterruptedException {
         synchronized (WhisperContext.class) {
