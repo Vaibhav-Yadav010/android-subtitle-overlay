@@ -124,6 +124,12 @@ public class MainPipeline {
                     if (translator.isReady()) {
                         translatePendingText();
                     } else {
+                        // Never leave the overlay stuck on its static placeholder while
+                        // the ML Kit model is downloading. Show the live source transcript
+                        // until the translator becomes ready, then replace it with English.
+                        if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                            SubtitleOverlayService.updateText(rawDisplayText);
+                        }
                         if (listener != null) listener.onTransltionUpdate("Loading translation…");
                         handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
                     }
