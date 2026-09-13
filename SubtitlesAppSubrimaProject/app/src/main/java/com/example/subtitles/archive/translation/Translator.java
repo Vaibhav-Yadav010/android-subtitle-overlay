@@ -3,7 +3,6 @@ package com.example.subtitles.archive.translation;
 import android.content.Context;
 import android.util.Log;
 
-
 import com.example.subtitles.archive.translation.tokenization.SentencePieceProcessor;
 
 import org.json.JSONArray;
@@ -20,15 +19,10 @@ import java.io.InputStream;
 import java.nio.FloatBuffer;
 import java.nio.LongBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
-
 
 /**
  * Translator wraps SentencePiece and ONNX Runtime to perform on-device many-to-many translation.
@@ -51,6 +45,7 @@ public class Translator implements AutoCloseable {
 
     private final AtomicBoolean isTranslating = new AtomicBoolean(false);
     private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+    private boolean closed;
 
     public Translator(Context ctx, String sourceLang, String targetLang) throws TranslationException {
         try {
@@ -79,14 +74,16 @@ public class Translator implements AutoCloseable {
 
     private void loadSpecialTokens() throws IOException, JSONException {
         File jsonFile = copyAsset(ASSET_DIR + "/special_tokens_map.json");
-        String json = readStreamToString(new java.io.FileInputStream(jsonFile));
-        JSONObject obj = new JSONObject(json);
-        JSONArray tokens = obj.getJSONArray("additional_special_tokens");
-        langTokenToId = new HashMap<>();
-        for (int i = 0; i < tokens.length(); i++) {
-            String token = tokens.getString(i);
-            String lang = token.replace("__", "");
-            langTokenToId.put(lang, spm.pieceToId(token));
+        try (InputStream in = new java.io.FileInputStream(jsonFile)) {
+            String json = readStreamToString(in);
+            JSONObject obj = new JSONObject(json);
+            JSONArray tokens = obj.getJSONArray("additional_special_tokens");
+            langTokenToId = new HashMap<>();
+            for (int i = 0; i < tokens.length(); i++) {
+                String token = tokens.getString(i);
+                String lang = token.replace("__", "");
+                langTokenToId.put(lang, spm.pieceToId(token));
+            }
         }
         Log.d(TAG, "Supported languages: " + langTokenToId.keySet());
     }
@@ -99,92 +96,123 @@ public class Translator implements AutoCloseable {
     }
 
     public synchronized void setSourceLanguage(String src) {
+        ensureOpen();
         if (isTranslating.get())
             throw new IllegalStateException("Cannot change language while translating");
-        srcLangTokenId = langTokenToId.getOrDefault(src, unkId);
+        srcLangTokenId = requireLanguageToken(src);
     }
 
     public synchronized void setTargetLanguage(String tgt) throws OrtException, IOException {
+        ensureOpen();
         if (isTranslating.get())
             throw new IllegalStateException("Cannot change language while translating");
-        tgtLangTokenId = langTokenToId.getOrDefault(tgt, unkId);
+        tgtLangTokenId = requireLanguageToken(tgt);
         if (encoderSession == null || decoderSession == null) initSessions();
     }
 
-    private void initSessions() throws OrtException, IOException {
-        OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-        opts.addConfigEntry("session.set_denormal_as_zero", "1");
-        encoderSession = env.createSession(copyAsset(ASSET_DIR + "/onnx/encoder_model_quantized.onnx").getAbsolutePath(), opts);
-        decoderSession = env.createSession(copyAsset(ASSET_DIR + "/onnx/decoder_model_merged_quantized.onnx").getAbsolutePath(), opts);
-        for (Map.Entry<String, NodeInfo> entry : encoderSession.getOutputInfo().entrySet()) {
-            Log.d("ONNX-EncoderOutput", "Name: " + entry.getKey() + ", Type: " + entry.getValue().getInfo().toString());
+    private int requireLanguageToken(String language) {
+        Integer tokenId = langTokenToId.get(language);
+        if (tokenId == null || tokenId == unkId) {
+            throw new IllegalArgumentException("Unsupported language: " + language);
         }
-        for (NodeInfo input : decoderSession.getInputInfo().values()) {
-            Log.d("ONNX-DecoderInput", "Name: " + input.getName() + ", Type: " + input.getInfo().toString());
-        }
+        return tokenId;
+    }
 
+    private void initSessions() throws OrtException, IOException {
+        File encoderFile = copyAsset(ASSET_DIR + "/onnx/encoder_model_quantized.onnx");
+        File decoderFile = copyAsset(ASSET_DIR + "/onnx/decoder_model_merged_quantized.onnx");
+        OrtSession newEncoder = null;
+        OrtSession newDecoder = null;
+        try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
+            opts.addConfigEntry("session.set_denormal_as_zero", "1");
+            newEncoder = env.createSession(encoderFile.getAbsolutePath(), opts);
+            newDecoder = env.createSession(decoderFile.getAbsolutePath(), opts);
+
+            for (Map.Entry<String, NodeInfo> entry : newEncoder.getOutputInfo().entrySet()) {
+                Log.d("ONNX-EncoderOutput", "Name: " + entry.getKey() + ", Type: " + entry.getValue().getInfo().toString());
+            }
+            for (NodeInfo input : newDecoder.getInputInfo().values()) {
+                Log.d("ONNX-DecoderInput", "Name: " + input.getName() + ", Type: " + input.getInfo().toString());
+            }
+        } catch (OrtException | RuntimeException e) {
+            if (newDecoder != null) newDecoder.close();
+            if (newEncoder != null) newEncoder.close();
+            throw e;
+        }
+        encoderSession = newEncoder;
+        decoderSession = newDecoder;
     }
 
     public synchronized String translate(String text) throws OrtException {
+        ensureOpen();
         if (!isTranslating.compareAndSet(false, true))
             throw new IllegalStateException("Already translating");
         stopRequested.set(false);
+
+        OnnxTensor encTensor = null;
+        OnnxTensor encMask = null;
+        OrtSession.Result encOut = null;
+        OnnxTensor encHidden = null;
         try {
             // 1) tokenize + build encoder input
             int[] srcIds = spm.encodeAsIds(text);
-            long[] encInput = new long[srcIds.length+3];
+            long[] encInput = new long[srcIds.length + 3];
             encInput[0] = bosId;
             encInput[1] = srcLangTokenId;
-            for (int i = 0; i < srcIds.length; i++) encInput[i+2] = srcIds[i];
-            encInput[encInput.length-1] = eosId;
+            for (int i = 0; i < srcIds.length; i++) encInput[i + 2] = srcIds[i];
+            encInput[encInput.length - 1] = eosId;
 
-            OnnxTensor encTensor = OnnxTensor.createTensor(env,
+            encTensor = OnnxTensor.createTensor(env,
                     LongBuffer.wrap(encInput),
                     new long[]{1, encInput.length});
-            OnnxTensor encMask = createAttentionMask(encInput.length);
+            encMask = createAttentionMask(encInput.length);
 
-            // 2) run encoder
-            OnnxTensor encHidden;
-            try (OrtSession.Result out = encoderSession.run(Map.of(
+            // 2) run encoder; keep the Result open because it owns encHidden.
+            encOut = encoderSession.run(Map.of(
                     "input_ids", encTensor,
-                    "attention_mask", encMask))) {
-                encHidden = (OnnxTensor) out.get(0);
-            }
+                    "attention_mask", encMask));
+            encHidden = (OnnxTensor) encOut.get(0);
+
+            // Encoder inputs are no longer needed after encoderSession.run().
+            encTensor.close();
+            encTensor = null;
+            encMask.close();
+            encMask = null;
 
             // 3) greedy decode WITHOUT cache
             StringBuilder sb = new StringBuilder();
             int[] decInputIds = new int[]{bosId, tgtLangTokenId};
-            for (int step=0; step<MAX_OUTPUT_LENGTH && !stopRequested.get(); step++) {
+            for (int step = 0; step < MAX_OUTPUT_LENGTH && !stopRequested.get(); step++) {
                 long[] decIds = new long[decInputIds.length];
-                for (int i=0; i<decInputIds.length; i++) decIds[i]=decInputIds[i];
+                for (int i = 0; i < decInputIds.length; i++) decIds[i] = decInputIds[i];
 
-                OnnxTensor decTensor = OnnxTensor.createTensor(env,
+                try (OnnxTensor decTensor = OnnxTensor.createTensor(env,
                         LongBuffer.wrap(decIds),
                         new long[]{1, decIds.length});
+                     OnnxTensor decMask = createAttentionMask(encInput.length);
+                     OrtSession.Result decOut = decoderSession.run(Map.of(
+                             "input_ids", decTensor,
+                             "encoder_hidden_states", encHidden,
+                             "encoder_attention_mask", decMask))) {
+                    float[][][] logits = (float[][][]) decOut.get(0).getValue();
+                    int next = argmax(logits[0][logits[0].length - 1]);
+                    if (next == eosId) break;
+                    sb.append(spm.idToPiece(next)).append(" ");
 
-                OnnxTensor decMask = createAttentionMask(encInput.length);
-                OrtSession.Result decOut = decoderSession.run(Map.of(
-                        "input_ids", decTensor,
-                        "encoder_hidden_states", encHidden,
-                        "encoder_attention_mask", decMask
-                ));
-                float[][][] logits = (float[][][]) decOut.get(0).getValue();
-                int next = argmax(logits[0][logits[0].length-1]);
-                decOut.close();
-                if (next == eosId) break;
-                sb.append(spm.idToPiece(next)).append(" ");
-                // append to decInputIds
-                int[] tmp = new int[decInputIds.length+1];
-                System.arraycopy(decInputIds, 0, tmp, 0, decInputIds.length);
-                tmp[tmp.length-1] = next;
-                decInputIds = tmp;
+                    int[] tmp = new int[decInputIds.length + 1];
+                    System.arraycopy(decInputIds, 0, tmp, 0, decInputIds.length);
+                    tmp[tmp.length - 1] = next;
+                    decInputIds = tmp;
+                }
             }
             return sb.toString().trim();
         } finally {
+            if (encTensor != null) encTensor.close();
+            if (encMask != null) encMask.close();
+            if (encOut != null) encOut.close();
             isTranslating.set(false);
         }
     }
-
 
     private OnnxTensor createAttentionMask(int len) throws OrtException {
         long[] m = new long[len];
@@ -193,19 +221,23 @@ public class Translator implements AutoCloseable {
     }
 
     private int argmax(float[] arr) {
-        int idx=0;
-        for(int i=1;i<arr.length;i++) if(arr[i]>arr[idx]) idx=i;
+        int idx = 0;
+        for (int i = 1; i < arr.length; i++) if (arr[i] > arr[idx]) idx = i;
         return idx;
     }
-
 
     public void stopTranslate() {
         stopRequested.set(true);
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) return;
         stopTranslate();
+        if (isTranslating.get()) {
+            throw new IllegalStateException("Cannot close while translation is running");
+        }
+        closed = true;
         try {
             if (spm != null) spm.close();
         } catch (Exception ignored) {
@@ -218,7 +250,14 @@ public class Translator implements AutoCloseable {
             if (decoderSession != null) decoderSession.close();
         } catch (Exception ignored) {
         }
-        env.close();
+        encoderSession = null;
+        decoderSession = null;
+        spm = null;
+        // OrtEnvironment is process-wide/shared and must not be closed by one Translator instance.
+    }
+
+    private void ensureOpen() {
+        if (closed) throw new IllegalStateException("Translator is closed");
     }
 
     private File copyAsset(String path) throws IOException {
