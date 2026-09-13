@@ -179,8 +179,14 @@ public class MainPipeline {
         handler.removeCallbacks(translationRetryRunnable);
         translationRetryCount = 0;
 
+        // Give ML Kit the previous completed sentence as context while keeping
+        // the current live transcript as the portion that should be displayed.
+        final String translationInput = lastSourceSentence == null || lastSourceSentence.trim().isEmpty()
+                ? fullText.trim()
+                : lastSourceSentence.trim() + "\n" + fullText.trim();
+
         try {
-            translator.translate(lastSourceSentence, fullText, new MlKitTranslator.TranslationCallback() {
+            translator.translate("", translationInput, new MlKitTranslator.TranslationCallback() {
                 @Override
                 public void onResult(String fullTranslated, String translated) {
                     String displayText = translated == null || translated.isEmpty()
