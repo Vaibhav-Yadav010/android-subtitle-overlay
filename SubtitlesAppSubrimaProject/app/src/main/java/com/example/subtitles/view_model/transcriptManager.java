@@ -77,6 +77,7 @@ public class transcriptManager {
     private String srcLang;                         // current source language code
     private Listener listener;                      // callback interface for updates/errors
     private boolean captureStartPending = false;   // waits for Vosk readiness before starting audio capture
+    private boolean languageSwitchPending = false; // explicit source-language switch requested by setParmeters()
 
     /**
      * Whisper-based transcription for large audio windows and optional correction
@@ -343,7 +344,7 @@ public class transcriptManager {
     /**
      * Sets pipeline parameters from SharedPreferences
      */
-    public void setParmeters() {
+    public synchronized void setParmeters() {
         if (!running.get()) {
             Log.i(TAG, "not started (running) yet there is no need to do it now...");
             return;
@@ -351,6 +352,7 @@ public class transcriptManager {
         SharedPreferences prefs = context.getSharedPreferences("subrima_prefs", MODE_PRIVATE);
         String tempSrc = prefs.getString("pref_source_lang", "auto");
         boolean tempCorrectionMode = prefs.getBoolean("pref_smart_correction", false);
+        languageSwitchPending = false;
         if (tempSrc.equals("auto")) {
             if (lidDetector != null) {
                 statusSrcLangDetected = true;
@@ -367,10 +369,9 @@ public class transcriptManager {
         } else {
             statusSrcLangDetected = false;
             if (lidDetector != null) lidDetector.stop();
-            boolean sourceChanged = !srcLang.equals(tempSrc);
-            srcLang = tempSrc;
-            if (sourceChanged) {
-                transcriber.switchLanguageAsync(srcLang);
+            if (!srcLang.equals(tempSrc)) {
+                languageSwitchPending = true;
+                transcriber.switchLanguageAsync(tempSrc);
             }
         }
         // Reset history and counters
@@ -408,7 +409,9 @@ public class transcriptManager {
         }
         captureStartPending = true;
         setParmeters();
-        transcriber.switchLanguageAsync(srcLang);
+        if (!languageSwitchPending) {
+            transcriber.switchLanguageAsync(srcLang);
+        }
         return true;
     }
     /**
@@ -420,6 +423,7 @@ public class transcriptManager {
         }
 
         captureStartPending = false;
+        languageSwitchPending = false;
         capturer.stop(false);
         transcriber.stop();
         if (srcLang.isEmpty()) {
@@ -458,42 +462,33 @@ public class transcriptManager {
             whisperT.close();
             whisperT = null;
         }
+        synchronized (lockVoskHistory) {
+            voskHistory.clear();
+        }
+        listener = null;
         synchronized (transcriptManager.class) {
             if (instance == this) {
                 instance = null;
             }
         }
-        Log.i(TAG, "Pipeline destroyed");
     }
 
-
-    /**
-     * Sets the listener for pipeline events
-     */
-    public void setListener(Listener l) {
-        this.listener = l;
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
-    /**
-     * Notifies the listener of an error
-     */
-    private void notifyError(String e) {
-        if (listener != null) listener.onError(e);
+    private void notifyError(String error) {
+        if (listener != null) {
+            listener.onError(new Exception(error));
+        }
     }
 
-    /**
-     * Listener interface for observing pipeline events
-     */
     public interface Listener {
+        void onTranscriptionUpdate(String lastSourceSentence, String fullText);
+        void onFinalResult(transcriptSegment seg);
         void onLanguageDetected(String lang);
-
         void onLanguageChange(String lang);
-
         void onModelTranscriptChange(String lang);
-
-        void onTranscriptionUpdate(String lastResult, String currentText);
-
-        void onError(String e);
+        void onError(Exception e);
     }
-
 }
