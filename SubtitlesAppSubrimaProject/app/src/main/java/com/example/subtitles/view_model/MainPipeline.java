@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * allowing optional translation and smart handling of long subtitles.
  */
 public class MainPipeline {
-    /// Maximum number of words shown in subtitles at a time
     public static final int MAX_SUBTITLES_WORDS = 10;
     private static final String TAG = "MainPipeline";
     private final transcriptManager transcriber;
@@ -96,39 +95,57 @@ public class MainPipeline {
                 handler.removeCallbacks(resetRunnable);
                 transcript.setLength(0);
                 transcript.append(fullText);
+
+                String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
+                if (subtitlesServiceReady && !rawDisplayText.isEmpty()) {
+                    // Never hide captions merely because translation is still loading or fails.
+                    SubtitleOverlayService.updateText(rawDisplayText);
+                }
+
                 if (listener != null) {
                     listener.onTranscriptionUpdate(lastSourceSentence + "\n|||||||\n" + fullText);
                 }
+
                 if (fullText.isEmpty()) {
-                    if (subtitlesServiceReady) SubtitleOverlayService.updateText(fullText);
+                    if (subtitlesServiceReady) SubtitleOverlayService.updateText("");
                 } else if (translator != null && !srcLang.equals(subtitleLang)) {
                     if (!translator.isReady()) {
                         if (listener != null) listener.onTransltionUpdate("Loading translation…");
+                        // Raw transcription remains visible above.
                     } else {
                         try {
                             translator.translate(lastSourceSentence, fullText, new MlKitTranslator.TranslationCallback() {
                                 @Override
                                 public void onResult(String fullTranslated, String translated) {
-                                    String displayText = trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
-                                    if (!translated.isEmpty() && subtitlesServiceReady) {
+                                    String displayText = translated == null || translated.isEmpty()
+                                            ? rawDisplayText
+                                            : trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
+                                    if (!displayText.isEmpty() && subtitlesServiceReady) {
                                         SubtitleOverlayService.updateText(displayText);
                                     }
                                     if (listener != null) listener.onTransltionUpdate(fullTranslated);
                                 }
+
                                 @Override
                                 public void onError(MlKitTranslator.TranslationException e) {
-                                    Log.e("Pipeline", "Translation error", e);
+                                    Log.e(TAG, "Translation error", e);
+                                    if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                                        SubtitleOverlayService.updateText(rawDisplayText);
+                                    }
+                                    if (listener != null) listener.onTransltionUpdate("Translation failed; showing source text");
                                 }
                             });
                         } catch (Exception e) {
-                            Log.e(TAG, "Translator translate failed: ", e);
+                            Log.e(TAG, "Translator translate failed", e);
+                            if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                                SubtitleOverlayService.updateText(rawDisplayText);
+                            }
                         }
                     }
                 } else {
-                    String displayText = trimToLastNUnits(fullText, subtitleLang, MAX_SUBTITLES_WORDS);
-                    Log.d("Pipeline", "NO Translated - Just Transcript: " + displayText);
-                    if (!displayText.isEmpty() && subtitlesServiceReady) {
-                        SubtitleOverlayService.updateText(displayText);
+                    Log.d(TAG, "NO Translated - Just Transcript: " + rawDisplayText);
+                    if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                        SubtitleOverlayService.updateText(rawDisplayText);
                     }
                     if (listener != null) listener.onTransltionUpdate("No translation needed");
                 }
