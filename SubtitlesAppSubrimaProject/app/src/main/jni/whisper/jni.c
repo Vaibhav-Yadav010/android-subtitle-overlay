@@ -98,6 +98,14 @@ void inputStreamClose(void *ctx) {
     UNUSED(ctx);
 }
 
+static void throwJavaException(JNIEnv *env, const char *class_name, const char *message) {
+    if (env == NULL || (*env)->ExceptionCheck(env)) return;
+    jclass exception_class = (*env)->FindClass(env, class_name);
+    if (exception_class == NULL) return;
+    (*env)->ThrowNew(env, exception_class, message);
+    (*env)->DeleteLocalRef(env, exception_class);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_initContextFromInputStream(
         JNIEnv *env, jobject thiz, jobject input_stream) {
@@ -106,6 +114,9 @@ Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib
     struct input_stream_context inp_ctx = {};
 
     if (env == NULL || input_stream == NULL) {
+        if (env != NULL) {
+            throwJavaException(env, "java/lang/IllegalArgumentException", "InputStream must not be null");
+        }
         return 0L;
     }
 
@@ -118,11 +129,13 @@ Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib
 
     jclass cls = (*env)->GetObjectClass(env, input_stream);
     if (cls == NULL || (*env)->ExceptionCheck(env)) {
+        throwJavaException(env, "java/lang/RuntimeException", "Failed to inspect InputStream");
         return 0L;
     }
     inp_ctx.mid_read = (*env)->GetMethodID(env, cls, "read", "([BII)I");
     (*env)->DeleteLocalRef(env, cls);
     if (inp_ctx.mid_read == NULL || (*env)->ExceptionCheck(env)) {
+        throwJavaException(env, "java/lang/RuntimeException", "InputStream.read(byte[], int, int) is unavailable");
         return 0L;
     }
 
@@ -137,6 +150,12 @@ Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib
     context = whisper_init_with_params(&loader, p);
     if (inp_ctx.failed) {
         LOGW("Whisper InputStream model loading failed");
+        if (context != NULL) whisper_free(context);
+        throwJavaException(env, "java/io/IOException", "Whisper model could not be read from InputStream");
+        return 0L;
+    }
+    if (context == NULL) {
+        throwJavaException(env, "java/io/IOException", "Whisper model initialization failed");
         return 0L;
     }
     return (jlong) context;
@@ -156,6 +175,10 @@ static struct whisper_context *whisper_init_from_asset(
         JNIEnv *env, jobject assetManager, const char *asset_path) {
     LOGI("Loading model from asset '%s'\n", asset_path);
     AAssetManager *asset_manager = AAssetManager_fromJava(env, assetManager);
+    if (asset_manager == NULL) {
+        LOGW("Failed to obtain native AssetManager");
+        return NULL;
+    }
     AAsset *asset = AAssetManager_open(asset_manager, asset_path, AASSET_MODE_STREAMING);
     if (!asset) {
         LOGW("Failed to open '%s'\n", asset_path);
@@ -173,18 +196,33 @@ static struct whisper_context *whisper_init_from_asset(
     cparams.use_gpu = false;
     cparams.flash_attn = true;
     cparams.dtw_token_timestamps = false;
-    return whisper_init_with_params(&loader, cparams);
+    struct whisper_context *context = whisper_init_with_params(&loader, cparams);
+    if (context == NULL) {
+        AAsset_close(asset);
+    }
+    return context;
 }
 
 JNIEXPORT jlong JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_initContextFromAsset(
         JNIEnv *env, jobject thiz, jobject assetManager, jstring asset_path_str) {
     UNUSED(thiz);
-    if (env == NULL || assetManager == NULL || asset_path_str == NULL) return 0L;
+    if (env == NULL || assetManager == NULL || asset_path_str == NULL) {
+        if (env != NULL) {
+            throwJavaException(env, "java/lang/IllegalArgumentException", "AssetManager and asset path must not be null");
+        }
+        return 0L;
+    }
     const char *asset_path_chars = (*env)->GetStringUTFChars(env, asset_path_str, NULL);
-    if (asset_path_chars == NULL) return 0L;
+    if (asset_path_chars == NULL) {
+        throwJavaException(env, "java/lang/RuntimeException", "Failed to read asset path");
+        return 0L;
+    }
     struct whisper_context *context = whisper_init_from_asset(env, assetManager, asset_path_chars);
     (*env)->ReleaseStringUTFChars(env, asset_path_str, asset_path_chars);
+    if (context == NULL) {
+        throwJavaException(env, "java/io/IOException", "Whisper model asset could not be initialized");
+    }
     return (jlong) context;
 }
 
@@ -192,15 +230,26 @@ JNIEXPORT jlong JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_initContext(
         JNIEnv *env, jobject thiz, jstring model_path_str) {
     UNUSED(thiz);
-    if (env == NULL || model_path_str == NULL) return 0L;
+    if (env == NULL || model_path_str == NULL) {
+        if (env != NULL) {
+            throwJavaException(env, "java/lang/IllegalArgumentException", "Model path must not be null");
+        }
+        return 0L;
+    }
     const char *model_path_chars = (*env)->GetStringUTFChars(env, model_path_str, NULL);
-    if (model_path_chars == NULL) return 0L;
+    if (model_path_chars == NULL) {
+        throwJavaException(env, "java/lang/RuntimeException", "Failed to read model path");
+        return 0L;
+    }
     struct whisper_context_params cparams = whisper_context_default_params();
     cparams.use_gpu = false;
     cparams.flash_attn = true;
     cparams.dtw_token_timestamps = false;
     struct whisper_context *ctx = whisper_init_from_file_with_params(model_path_chars, cparams);
     (*env)->ReleaseStringUTFChars(env, model_path_str, model_path_chars);
+    if (ctx == NULL) {
+        throwJavaException(env, "java/io/IOException", "Whisper model initialization failed");
+    }
     return (jlong)ctx;
 }
 
@@ -217,13 +266,29 @@ JNIEXPORT void JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_fullTranscribe(
         JNIEnv *env, jobject thiz, jlong context_ptr, jint num_threads, jfloatArray audio_data) {
     UNUSED(thiz);
-    if (env == NULL || context_ptr == 0 || audio_data == NULL || num_threads <= 0) return;
+    if (env == NULL) return;
+    if (context_ptr == 0) {
+        throwJavaException(env, "java/lang/IllegalStateException", "Whisper context is null");
+        return;
+    }
+    if (audio_data == NULL) {
+        throwJavaException(env, "java/lang/IllegalArgumentException", "Audio data must not be null");
+        return;
+    }
+    if (num_threads <= 0) {
+        throwJavaException(env, "java/lang/IllegalArgumentException", "Whisper thread count must be positive");
+        return;
+    }
     struct whisper_context *context = (struct whisper_context *) context_ptr;
     jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
-    if (audio_data_arr == NULL) return;
+    if (audio_data_arr == NULL) {
+        throwJavaException(env, "java/lang/RuntimeException", "Failed to access audio buffer");
+        return;
+    }
     const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
     if (audio_data_length <= 0) {
         (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
+        throwJavaException(env, "java/lang/IllegalArgumentException", "Audio data must not be empty");
         return;
     }
 
@@ -240,50 +305,98 @@ Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib
 
     whisper_reset_timings(context);
     LOGI("About to run whisper_full");
-    if (whisper_full_parallel(context, params, audio_data_arr, audio_data_length, num_threads) != 0) {
-        LOGI("Failed to run the model");
-    } else {
-        whisper_print_timings(context);
+    const int result = whisper_full_parallel(context, params, audio_data_arr, audio_data_length, num_threads);
+    if (result != 0) {
+        LOGW("Failed to run the model (code=%d)", result);
+        (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
+        throwJavaException(env, "java/lang/RuntimeException", "Whisper transcription failed");
+        return;
     }
+    whisper_print_timings(context);
     (*env)->ReleaseFloatArrayElements(env, audio_data, audio_data_arr, JNI_ABORT);
 }
 
 JNIEXPORT jint JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_getTextSegmentCount(
         JNIEnv *env, jobject thiz, jlong context_ptr) {
-    UNUSED(env); UNUSED(thiz);
-    if (context_ptr == 0) return 0;
-    return whisper_full_n_segments((struct whisper_context *) context_ptr);
+    UNUSED(thiz);
+    if (env == NULL || context_ptr == 0) {
+        if (env != NULL) throwJavaException(env, "java/lang/IllegalStateException", "Whisper context is null");
+        return 0;
+    }
+    int count = whisper_full_n_segments((struct whisper_context *) context_ptr);
+    if (count < 0) {
+        throwJavaException(env, "java/lang/RuntimeException", "Whisper returned an invalid segment count");
+        return 0;
+    }
+    return count;
 }
 
 JNIEXPORT jstring JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_getTextSegment(
         JNIEnv *env, jobject thiz, jlong context_ptr, jint index) {
     UNUSED(thiz);
-    if (env == NULL || context_ptr == 0 || index < 0) return NULL;
+    if (env == NULL || context_ptr == 0 || index < 0) {
+        if (env != NULL && context_ptr == 0) {
+            throwJavaException(env, "java/lang/IllegalStateException", "Whisper context is null");
+        } else if (env != NULL && index < 0) {
+            throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is negative");
+        }
+        return NULL;
+    }
     struct whisper_context *context = (struct whisper_context *) context_ptr;
     int count = whisper_full_n_segments(context);
-    if (index >= count) return NULL;
+    if (index >= count) {
+        throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is out of bounds");
+        return NULL;
+    }
     const char *text = whisper_full_get_segment_text(context, index);
-    if (text == NULL) return NULL;
-    return (*env)->NewStringUTF(env, text);
+    if (text == NULL) {
+        throwJavaException(env, "java/lang/RuntimeException", "Whisper returned a null segment text");
+        return NULL;
+    }
+    jstring result = (*env)->NewStringUTF(env, text);
+    if (result == NULL && !(*env)->ExceptionCheck(env)) {
+        throwJavaException(env, "java/lang/RuntimeException", "Failed to create Java segment text");
+    }
+    return result;
 }
 
 JNIEXPORT jlong JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_getTextSegmentT0(JNIEnv *env, jobject thiz,jlong context_ptr, jint index) {
     UNUSED(thiz);
-    if (env == NULL || context_ptr == 0 || index < 0) return 0;
+    if (env == NULL || context_ptr == 0 || index < 0) {
+        if (env != NULL && context_ptr == 0) {
+            throwJavaException(env, "java/lang/IllegalStateException", "Whisper context is null");
+        } else if (env != NULL && index < 0) {
+            throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is negative");
+        }
+        return 0;
+    }
     struct whisper_context *context = (struct whisper_context *) context_ptr;
-    if (index >= whisper_full_n_segments(context)) return 0;
+    if (index >= whisper_full_n_segments(context)) {
+        throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is out of bounds");
+        return 0;
+    }
     return (jlong)whisper_full_get_segment_t0(context, index);
 }
 
 JNIEXPORT jlong JNICALL
 Java_com_example_subtitles_model_transcription_correction_whisper_lib_WhisperLib_getTextSegmentT1(JNIEnv *env, jobject thiz,jlong context_ptr, jint index) {
     UNUSED(thiz);
-    if (env == NULL || context_ptr == 0 || index < 0) return 0;
+    if (env == NULL || context_ptr == 0 || index < 0) {
+        if (env != NULL && context_ptr == 0) {
+            throwJavaException(env, "java/lang/IllegalStateException", "Whisper context is null");
+        } else if (env != NULL && index < 0) {
+            throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is negative");
+        }
+        return 0;
+    }
     struct whisper_context *context = (struct whisper_context *) context_ptr;
-    if (index >= whisper_full_n_segments(context)) return 0;
+    if (index >= whisper_full_n_segments(context)) {
+        throwJavaException(env, "java/lang/IndexOutOfBoundsException", "Whisper segment index is out of bounds");
+        return 0;
+    }
     return (jlong)whisper_full_get_segment_t1(context, index);
 }
 
