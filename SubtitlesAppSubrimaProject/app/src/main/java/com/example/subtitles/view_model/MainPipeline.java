@@ -105,11 +105,6 @@ public class MainPipeline {
                 transcript.setLength(0);
                 transcript.append(fullText);
 
-                String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
-                if (subtitlesServiceReady && !rawDisplayText.isEmpty()) {
-                    SubtitleOverlayService.updateText(rawDisplayText);
-                }
-
                 if (listener != null) {
                     listener.onTranscriptionUpdate(lastSourceSentence + "\n|||||||\n" + fullText);
                 }
@@ -120,6 +115,7 @@ public class MainPipeline {
                     pendingTranslationRaw = "";
                     if (subtitlesServiceReady) SubtitleOverlayService.updateText("");
                 } else if (translator != null && !srcLang.equals(subtitleLang)) {
+                    String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
                     pendingTranslationSentence = lastSourceSentence;
                     pendingTranslationText = fullText;
                     pendingTranslationRaw = rawDisplayText;
@@ -132,6 +128,7 @@ public class MainPipeline {
                         handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
                     }
                 } else {
+                    String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
                     Log.d(TAG, "NO Translated - Just Transcript: " + rawDisplayText);
                     if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(rawDisplayText);
