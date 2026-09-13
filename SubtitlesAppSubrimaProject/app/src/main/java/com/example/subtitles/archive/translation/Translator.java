@@ -189,11 +189,11 @@ public class Translator implements AutoCloseable {
                 try (OnnxTensor decTensor = OnnxTensor.createTensor(env,
                         LongBuffer.wrap(decIds),
                         new long[]{1, decIds.length});
-                     OnnxTensor decMask = createAttentionMask(encInput.length);
+                     OnnxTensor decMask = createAttentionMask(decIds.length);
                      OrtSession.Result decOut = decoderSession.run(Map.of(
                              "input_ids", decTensor,
                              "encoder_hidden_states", encHidden,
-                             "encoder_attention_mask", decMask))) {
+                             "encoder_attention_mask", encMask))) {
                     float[][][] logits = (float[][][]) decOut.get(0).getValue();
                     int next = argmax(logits[0][logits[0].length - 1]);
                     if (next == eosId) break;
@@ -262,13 +262,24 @@ public class Translator implements AutoCloseable {
 
     private File copyAsset(String path) throws IOException {
         File out = new File(ctx.getFilesDir(), path.replace('/', '_'));
-        if (!out.exists()) {
-            try (InputStream in = ctx.getAssets().open(path);
-                 FileOutputStream fos = new FileOutputStream(out)) {
-                byte[] buf = new byte[4096];
-                int r;
-                while ((r = in.read(buf)) > 0) fos.write(buf, 0, r);
+        if (out.exists()) return out;
+        File tmp = new File(out.getPath() + ".part");
+        try (InputStream in = ctx.getAssets().open(path);
+             FileOutputStream fos = new FileOutputStream(tmp)) {
+            byte[] buf = new byte[4096];
+            int r;
+            while ((r = in.read(buf)) > 0) fos.write(buf, 0, r);
+        } catch (IOException | RuntimeException e) {
+            if (!tmp.delete() && tmp.exists()) {
+                Log.w(TAG, "Failed to delete partial asset: " + tmp);
             }
+            throw e;
+        }
+        if (!tmp.renameTo(out)) {
+            if (!tmp.delete()) {
+                Log.w(TAG, "Failed to delete temporary asset: " + tmp);
+            }
+            throw new IOException("Failed to finalize asset copy: " + path);
         }
         return out;
     }
