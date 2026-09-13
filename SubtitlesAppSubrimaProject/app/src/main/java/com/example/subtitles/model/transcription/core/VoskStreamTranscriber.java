@@ -605,10 +605,10 @@ public class VoskStreamTranscriber {
                         if (specialLanguageNotSpacedOut) {
                             newWords.add(partial);
                         } else {
+                            // Keep the complete partial result so live captions can
+                            // appear before Vosk emits a final result at a pause.
                             String[] allWords = partial.split("\\s+");
-                            for (int i = 0; i < allWords.length - 1; i++) {
-                                newWords.add(allWords[i]);
-                            }
+                            newWords.addAll(Arrays.asList(allWords));
                         }
                         if(wasFinalSeg) {
                             segStart = chunkTime;
