@@ -26,19 +26,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * MainPipeline is the central orchestrator for the transcription and subtitle workflow.
- *
- * Responsibilities include:
- * 1. Starting and stopping audio capture via transcriptManager.
- * 2. Handling source language detection and switching.
- * 3. Translating transcriptions to a target language using MlKitTranslator.
- * 4. Updating subtitles in the overlay service.
- * 5. Managing UI callbacks through the Listener interface.
- *
- * It combines transcription, translation, and display in a single pipeline,
- * allowing optional translation and smart handling of long subtitles.
- */
 public class MainPipeline {
     public static final int MAX_SUBTITLES_WORDS = 10;
     private static final String TAG = "MainPipeline";
@@ -63,15 +50,18 @@ public class MainPipeline {
     private String pendingTranslationRaw = "";
     private int translationRetryCount = 0;
 
-    private final Runnable translationRetryRunnable = () -> {
-        if (!started.get() || translator == null || pendingTranslationText.isEmpty()) return;
-        if (translator.isReady()) {
-            translatePendingText();
-        } else if (translationRetryCount < MAX_TRANSLATION_RETRIES) {
-            translationRetryCount++;
-            handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
-        } else {
-            translationRetryCount = 0;
+    private final Runnable translationRetryRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!started.get() || translator == null || pendingTranslationText.isEmpty()) return;
+            if (translator.isReady()) {
+                translatePendingText();
+            } else if (translationRetryCount < MAX_TRANSLATION_RETRIES) {
+                translationRetryCount++;
+                handler.postDelayed(this, TRANSLATION_RETRY_DELAY_MS);
+            } else {
+                translationRetryCount = 0;
+            }
         }
     };
 
@@ -117,7 +107,6 @@ public class MainPipeline {
 
                 String rawDisplayText = trimToLastNUnits(fullText, srcLang, MAX_SUBTITLES_WORDS);
                 if (subtitlesServiceReady && !rawDisplayText.isEmpty()) {
-                    // Never hide captions merely because translation is still loading or fails.
                     SubtitleOverlayService.updateText(rawDisplayText);
                 }
 
@@ -154,7 +143,6 @@ public class MainPipeline {
 
             @Override
             public void onFinalResult(transcriptSegment seg) {
-                // MainPipeline does not need per-segment final-result handling.
             }
 
             @Override
