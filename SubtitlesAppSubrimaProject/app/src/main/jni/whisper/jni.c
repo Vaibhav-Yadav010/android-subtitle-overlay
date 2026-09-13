@@ -196,11 +196,7 @@ static struct whisper_context *whisper_init_from_asset(
     cparams.use_gpu = false;
     cparams.flash_attn = true;
     cparams.dtw_token_timestamps = false;
-    struct whisper_context *context = whisper_init_with_params(&loader, cparams);
-    if (context == NULL) {
-        AAsset_close(asset);
-    }
-    return context;
+    return whisper_init_with_params(&loader, cparams);
 }
 
 JNIEXPORT jlong JNICALL
