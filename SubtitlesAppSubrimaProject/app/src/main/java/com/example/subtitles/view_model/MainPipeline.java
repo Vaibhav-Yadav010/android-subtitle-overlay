@@ -41,73 +41,34 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MainPipeline {
     /// Maximum number of words shown in subtitles at a time
     public static final int MAX_SUBTITLES_WORDS = 10;
-
-    /// Logging tag
     private static final String TAG = "MainPipeline";
-
-    /// Core transcription engine
     private final transcriptManager transcriber;
-
-    /// Translator instance
     private final MlKitTranslator translator;
-
-    /// Accumulates current transcript
     private final StringBuilder transcript = new StringBuilder();
-
-    /// Application context
     private final Context cxt;
-
-    /// Tracks whether the pipeline is started
     private final AtomicBoolean started = new AtomicBoolean(false);
-
-    /// Tracks whether destroy has been requested
     private final AtomicBoolean destroyed = new AtomicBoolean(false);
-
-    /// Main thread handler for UI updates and scheduling
     private final Handler handler = new Handler(Looper.getMainLooper());
-
-    /// Pipeline listener for callbacks
     private volatile Listener listener;
-
-    /// Map of supported languages for Google Translate / translation validation
     private JSONObject googleLangMap;
-
-    /// Current source language settings
-    private String sourceLang = "auto"; // user-selected source language
-    private String srcLang = "en";      // active detected/used source language
-    private String subtitleLang = "en"; // active subtitle/translation target language
-
-    /// Indicates whether subtitle overlay service is initialized and ready
+    private String sourceLang = "auto";
+    private String srcLang = "en";
+    private String subtitleLang = "en";
     private boolean subtitlesServiceReady = false;
 
-    /**
-     * Runnable for resetting subtitles after a timeout.
-     * Clears overlay and notifies listener with empty strings.
-     */
     private final Runnable resetRunnable = () -> {
         Log.d(TAG, "Resetting subtitles due to timeout");
-        // Notify listener with empty strings to reset UI and translation
         if (listener != null) {
             listener.onTranscriptionUpdate("");
             listener.onTransltionUpdate("");
         }
-        // Clear the overlay as well
-        if(subtitlesServiceReady) {
+        if (subtitlesServiceReady) {
             SubtitleOverlayService.updateText("");
         }
     };
 
-
-    /**
-     * Constructs the MainPipeline instance.
-     * Initializes translator, loads language map, and sets up the transcriptManager listener.
-     *
-     * @param context Application context
-     * @throws IOException if loading google_dict.json fails
-     */
     public MainPipeline(Context context) throws IOException {
         this.cxt = context.getApplicationContext();
-        // Initialize translator
         MlKitTranslator tempTransltor = null;
         try {
             tempTransltor = new MlKitTranslator(this.cxt, srcLang, subtitleLang);
@@ -116,7 +77,6 @@ public class MainPipeline {
             notifyError(e.getMessage());
         }
         translator = tempTransltor;
-        // Load Google language map from assets
         try (InputStream is = this.cxt.getAssets().open("google_dict.json")) {
             int size = is.available();
             byte[] buffer = new byte[size];
@@ -126,55 +86,34 @@ public class MainPipeline {
             Log.d(TAG, "Google language map loaded with " + googleLangMap.length() + " entries");
         } catch (IOException | JSONException e) {
             Log.e(TAG, "Failed to load google_dict.json", e);
-            googleLangMap = new JSONObject(); // fail-safe fallback
+            googleLangMap = new JSONObject();
         }
-        // Initialize transcript manager singleton
         this.transcriber = transcriptManager.getInstance(this.cxt, srcLang, googleLangMap);
-
-
-
-        // Set listener for transcription events
         this.transcriber.setListener(new transcriptManager.Listener() {
             @Override
             public void onTranscriptionUpdate(String lastSourceSentence, String fullText) {
-                // Cancel any pending reset operations
                 handler.removeCallbacks(resetRunnable);
-
-                // Update internal transcript buffer
                 transcript.setLength(0);
                 transcript.append(fullText);
-                // Notify listener
                 if (listener != null) {
                     listener.onTranscriptionUpdate(lastSourceSentence + "\n|||||||\n" + fullText);
                 }
-                // Update subtitle overlay based on translation availability
                 if (fullText.isEmpty()) {
-                    if(subtitlesServiceReady) {
-                        SubtitleOverlayService.updateText(fullText);
-                    }
+                    if (subtitlesServiceReady) SubtitleOverlayService.updateText(fullText);
                 } else if (translator != null && !srcLang.equals(subtitleLang)) {
-                    // Translation is enabled and needed
                     if (!translator.isReady()) {
-                        //Log.d(TAG, "got transcript but translate is not ready");
-                        if (listener != null) {
-                            listener.onTransltionUpdate("Loading translation…");
-                        }
+                        if (listener != null) listener.onTransltionUpdate("Loading translation…");
                     } else {
                         try {
                             translator.translate(lastSourceSentence, fullText, new MlKitTranslator.TranslationCallback() {
                                 @Override
                                 public void onResult(String fullTranslated, String translated) {
                                     String displayText = trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
-
-                                    // Update overlay
                                     if (!translated.isEmpty() && subtitlesServiceReady) {
                                         SubtitleOverlayService.updateText(displayText);
                                     }
-                                    if (listener != null) {
-                                        listener.onTransltionUpdate(fullTranslated);
-                                    }
+                                    if (listener != null) listener.onTransltionUpdate(fullTranslated);
                                 }
-
                                 @Override
                                 public void onError(MlKitTranslator.TranslationException e) {
                                     Log.e("Pipeline", "Translation error", e);
@@ -182,33 +121,27 @@ public class MainPipeline {
                             });
                         } catch (Exception e) {
                             Log.e(TAG, "Translator translate failed: ", e);
-
                         }
                     }
                 } else {
-                    // No translation needed
                     String displayText = trimToLastNUnits(fullText, subtitleLang, MAX_SUBTITLES_WORDS);
-
                     Log.d("Pipeline", "NO Translated - Just Transcript: " + displayText);
                     if (!displayText.isEmpty() && subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(displayText);
                     }
-                    if (listener != null) {
-                        listener.onTransltionUpdate("No translation needed");
-                    }
+                    if (listener != null) listener.onTransltionUpdate("No translation needed");
                 }
-                // Schedule reset after 2 seconds
                 handler.postDelayed(resetRunnable, 2000);
             }
 
             @Override
-            public void onError(String e) {
-                notifyError(e);
+            public void onError(Exception e) {
+                notifyError(e == null ? "Unknown transcription error" : e.getMessage());
             }
 
             @Override
             public void onModelTranscriptChange(String newLang) {
-                if (!newLang.isEmpty() && (!newLang.equals(srcLang))) {
+                if (!newLang.isEmpty() && !newLang.equals(srcLang)) {
                     srcLang = newLang;
                     setLanguage(subtitleLang);
                 }
@@ -216,60 +149,34 @@ public class MainPipeline {
 
             @Override
             public void onLanguageDetected(String lang) {
-                if (listener != null) {
-                    listener.onLanguageDetected("Language: " + lang + " : " + lang + "(X)");
-                }
+                if (listener != null) listener.onLanguageDetected("Language: " + lang + " : " + lang + "(X)");
             }
 
             @Override
             public void onLanguageChange(String lang) {
-                if (listener != null) {
-                    listener.onLanguageDetected("Language: " + lang + " : " + lang + "(V)");
-                }
+                if (listener != null) listener.onLanguageDetected("Language: " + lang + " : " + lang + "(V)");
             }
-
         });
-
-
     }
-    /**
-     * Trims text to the last N word units, to prevent overly long subtitles.
-     *
-     * @param text     The original text
-     * @param langTag  Language tag for proper word segmentation
-     * @param maxUnits Maximum number of words to retain
-     * @return Trimmed text
-     */
+
     private String trimToLastNUnits(String text, String langTag, int maxUnits) {
-        if (text == null || text.isEmpty() || maxUnits <= 0) {
-            return "";
-        }
+        if (text == null || text.isEmpty() || maxUnits <= 0) return "";
         Locale locale = Locale.forLanguageTag(langTag);
         BreakIterator bi = BreakIterator.getWordInstance(locale);
         bi.setText(text);
-
         List<Integer> boundaries = new ArrayList<>();
         int start = bi.first();
         for (int end = bi.next(); end != BreakIterator.DONE; start = end, end = bi.next()) {
             String piece = text.substring(start, end);
-            if (!piece.isEmpty() && Character.isLetterOrDigit(piece.codePointAt(0))) {
-                boundaries.add(start);
-            }
+            if (!piece.isEmpty() && Character.isLetterOrDigit(piece.codePointAt(0))) boundaries.add(start);
         }
         boundaries.add(text.length());
-
         int total = boundaries.size() - 1;
-        if (total <= maxUnits) {
-            return text;
-        }
+        if (total <= maxUnits) return text;
         int cutIndex = boundaries.get(total - maxUnits);
         return text.substring(cutIndex).trim();
     }
-    /**
-     * Updates pipeline parameters from SharedPreferences.
-     * An explicit source-language change is committed only after Vosk reports
-     * that the requested model is active.
-     */
+
     public void setParmeters() {
         if (!started.get()) {
             Log.i(TAG, "pipeline not working (running) yet there is no need to do it now...");
@@ -277,36 +184,19 @@ public class MainPipeline {
         }
         SharedPreferences prefs = cxt.getSharedPreferences("subrima_prefs", Context.MODE_PRIVATE);
         sourceLang = prefs.getString("pref_source_lang", "auto");
-
-        String selectedSubtitleLang =
-                prefs.getString("pref_subtitle_lang", "en");
-
+        String selectedSubtitleLang = prefs.getString("pref_subtitle_lang", "en");
         boolean sourceChanged = !sourceLang.equals("auto") && !sourceLang.equals(srcLang);
         boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
-
-        // transcriptManager owns the Vosk model switch. Do not mutate srcLang before
-        // that switch succeeds; onModelTranscriptChange() commits the active language.
         if (!sourceChanged && targetChanged) {
-            if (!setLanguage(selectedSubtitleLang)) {
-                notifyError("problem changing translation languages...");
-            }
+            if (!setLanguage(selectedSubtitleLang)) notifyError("problem changing translation languages...");
         }
         transcriber.setParmeters();
     }
 
-
-    /**
-     * Sets the pipeline listener for UI updates or error handling
-     */
     public void setListener(Listener l) {
         this.listener = l;
     }
 
-    /**
-     * Starts audio capture, transcription, translation, and overlay.
-     *
-     * @return true if audio capture started successfully
-     */
     @RequiresApi(api = Build.VERSION_CODES.Q)
     public synchronized boolean start() {
         if (destroyed.get()) {
@@ -317,7 +207,6 @@ public class MainPipeline {
             Log.i(TAG, "Already translating");
             return false;
         }
-
         started.set(true);
         try {
             setParmeters();
@@ -327,38 +216,21 @@ public class MainPipeline {
                 Log.w(TAG, "Audio capture failed to start; pipeline state reset");
                 return false;
             }
-
             if (translator != null) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
-                    @Override
-                    public void onReady() {
-                        Log.i(TAG, "Translator models are ready after resume");
-                    }
-
-                    @Override
-                    public void onError(Exception e) {
-                        Log.e(TAG, "Translator failed to resume", e);
-                        notifyError(e.getMessage());
-                    }
+                    @Override public void onReady() { Log.i(TAG, "Translator models are ready after resume"); }
+                    @Override public void onError(Exception e) { Log.e(TAG, "Translator failed to resume", e); notifyError(e.getMessage()); }
                 });
             }
-            // Start subtitle overlay service
             Intent overlayIntent = new Intent(cxt, SubtitleOverlayService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                cxt.startForegroundService(overlayIntent);
-            } else {
-                cxt.startService(overlayIntent);
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) cxt.startForegroundService(overlayIntent);
+            else cxt.startService(overlayIntent);
             SubtitleOverlayService.showOverlay();
             subtitlesServiceReady = true;
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Pipeline start failed", e);
-            try {
-                transcriber.stop();
-            } catch (Exception cleanupError) {
-                Log.w(TAG, "Failed to clean up transcriber after start failure", cleanupError);
-            }
+            try { transcriber.stop(); } catch (Exception cleanupError) { Log.w(TAG, "Failed to clean up transcriber after start failure", cleanupError); }
             started.set(false);
             subtitlesServiceReady = false;
             handler.removeCallbacks(resetRunnable);
@@ -366,58 +238,34 @@ public class MainPipeline {
         }
     }
 
-    /**
-     * Stops audio capture, transcription, translation, and overlay.
-     */
     public synchronized void stop() {
         if (!started.get()) return;
         handler.removeCallbacks(resetRunnable);
         SubtitleOverlayService.hideOverlay();
         subtitlesServiceReady = false;
         transcriber.stop();
-        if (translator != null) {
-            translator.pause();
-        }
-        if(srcLang.isEmpty()) {
-            srcLang = "en";
-        }
+        if (translator != null) translator.pause();
+        if (srcLang.isEmpty()) srcLang = "en";
         started.set(false);
     }
 
-    /**
-     * Releases all resources and stops services. Call in Activity.onDestroy().
-     */
     public synchronized void destroy() {
-        if (!destroyed.compareAndSet(false, true)) {
-            return;
-        }
+        if (!destroyed.compareAndSet(false, true)) return;
         stop();
         cxt.stopService(new Intent(cxt, SubtitleOverlayService.class));
         transcriber.close();
         if (translator != null) {
-            try {
-                translator.close();
-            } catch (Exception e) {
-                Log.w(TAG, "Error closing Translator", e);
-            }
+            try { translator.close(); } catch (Exception e) { Log.w(TAG, "Error closing Translator", e); }
         }
         listener = null;
         Log.i(TAG, "Pipeline destroyed");
     }
-    /**
-     * Helper to notify the listener of an error
-     */
+
     private void notifyError(String e) {
         Listener currentListener = listener;
         if (currentListener != null) currentListener.onError(e);
     }
 
-    /**
-     * Switches the subtitle translation language at runtime.
-     *
-     * @param newDstLang Target language
-     * @return true if language switch succeeded
-     */
     public boolean setLanguage(String newDstLang) {
         try {
             if (translator != null) {
@@ -430,26 +278,19 @@ public class MainPipeline {
                     Log.w(TAG, "Failed to switch target language to: " + newDstLang);
                 }
                 return success;
-            } else {
-                Log.w(TAG, "Translator instance is null – cannot switch language");
-                return false;
             }
+            Log.w(TAG, "Translator instance is null – cannot switch language");
+            return false;
         } catch (Exception e) {
             Log.e(TAG, "Exception while switching target language", e);
             return false;
         }
     }
-    /**
-     * Listener interface for pipeline events
-     */
+
     public interface Listener {
         void onLanguageDetected(String lang);
-
         void onTranscriptionUpdate(String fullText);
-
         void onTransltionUpdate(String translate);
-
         void onError(String e);
     }
-
 }
