@@ -230,40 +230,48 @@ public class WhisperTranscriber {
         }, "WhisperStopper").start();
     }
 
-    public synchronized void close() {
-        running.set(false);
-        isDone = true;
-        Thread worker = processingThread;
-        instance = null;
-        if (worker == null) {
-            resetAll();
-            closeContext();
-            return;
+    public void close() throws IOException {
+        Thread worker;
+        synchronized (this) {
+            if (!running.get() && processingThread == null && ctx == null) {
+                return;
+            }
+            running.set(false);
+            isDone = true;
+            worker = processingThread;
+            if (worker != null) {
+                worker.interrupt();
+            }
         }
 
-        worker.interrupt();
-        new Thread(() -> {
+        if (worker != null && Thread.currentThread() != worker) {
             joinUninterruptibly(worker);
-            synchronized (WhisperTranscriber.this) {
-                if (processingThread == worker) {
-                    processingThread = null;
-                }
+        }
+
+        synchronized (this) {
+            if (processingThread == worker) {
+                processingThread = null;
             }
             resetAll();
-            closeContext();
-        }, "WhisperCloser").start();
-    }
-
-    private synchronized void closeContext() {
-        if (ctx == null) return;
-        try {
-            ctx.close();
-        } catch (Exception e) {
-            Log.e(TAG, "Error closing WhisperContext", e);
-        } finally {
-            ctx = null;
         }
-        Log.i(TAG, "WhisperTranscriber closed");
+
+        WhisperContext context = ctx;
+        try {
+            if (context != null) {
+                context.close();
+            }
+        } catch (Exception e) {
+            throw new IOException("Failed to close WhisperContext", e);
+        } finally {
+            synchronized (this) {
+                ctx = null;
+            }
+            synchronized (WhisperTranscriber.class) {
+                if (instance == this) {
+                    instance = null;
+                }
+            }
+        }
     }
 
     public void setListener(Whisperlistener listener) {
