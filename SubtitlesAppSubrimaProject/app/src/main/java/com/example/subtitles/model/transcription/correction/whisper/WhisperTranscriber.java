@@ -230,7 +230,7 @@ public class WhisperTranscriber {
         }, "WhisperStopper").start();
     }
 
-    public void close() throws IOException {
+    public void close() {
         Thread worker;
         synchronized (this) {
             if (!running.get() && processingThread == null && ctx == null) {
@@ -261,7 +261,7 @@ public class WhisperTranscriber {
                 context.close();
             }
         } catch (Exception e) {
-            throw new IOException("Failed to close WhisperContext", e);
+            Log.e(TAG, "Failed to close WhisperContext", e);
         } finally {
             synchronized (this) {
                 ctx = null;
