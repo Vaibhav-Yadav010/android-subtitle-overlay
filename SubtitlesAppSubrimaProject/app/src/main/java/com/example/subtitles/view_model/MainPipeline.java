@@ -10,6 +10,7 @@ import android.util.Log;
 
 import androidx.annotation.RequiresApi;
 
+import com.example.subtitles.model.transcription.correction.transcriptSegment;
 import com.example.subtitles.model.translation.MlKitTranslator;
 import com.example.subtitles.view.overlay.SubtitleOverlayService;
 
@@ -132,6 +133,11 @@ public class MainPipeline {
                     if (listener != null) listener.onTransltionUpdate("No translation needed");
                 }
                 handler.postDelayed(resetRunnable, 2000);
+            }
+
+            @Override
+            public void onFinalResult(transcriptSegment seg) {
+                // MainPipeline does not need per-segment final-result handling.
             }
 
             @Override
