@@ -45,6 +45,11 @@ public class MainPipeline {
     private String subtitleLang = "en";
     private boolean subtitlesServiceReady = false;
 
+    // Translation lifecycle is kept separate from transcription lifecycle.
+    // The first pipeline start already has a translator initialized by the constructor;
+    // calling resume() again there races with automatic source-language detection.
+    private boolean translatorNeedsResume = false;
+
     private String pendingTranslationSentence = "";
     private String pendingTranslationText = "";
     private String pendingTranslationRaw = "";
@@ -124,9 +129,7 @@ public class MainPipeline {
                     if (translator.isReady()) {
                         translatePendingText();
                     } else {
-                        // Never leave the overlay stuck on its static placeholder while
-                        // the ML Kit model is downloading. Show the live source transcript
-                        // until the translator becomes ready, then replace it with English.
+                        // Keep the live source visible while the dynamic ML Kit model is loading.
                         if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
                             SubtitleOverlayService.updateText(rawDisplayText);
                         }
@@ -157,7 +160,10 @@ public class MainPipeline {
             public void onModelTranscriptChange(String newLang) {
                 if (!newLang.isEmpty() && !newLang.equals(srcLang)) {
                     srcLang = newLang;
-                    setLanguage(subtitleLang);
+                    Log.i(TAG, "Vosk source language changed to " + newLang + "; rebuilding translator");
+                    if (!setLanguage(subtitleLang)) {
+                        notifyError("Unable to initialize translation for source language: " + newLang);
+                    }
                 }
             }
 
@@ -185,8 +191,8 @@ public class MainPipeline {
         handler.removeCallbacks(translationRetryRunnable);
         translationRetryCount = 0;
 
-        // Give ML Kit the previous completed sentence as context while keeping
-        // the current live transcript as the portion that should be displayed.
+        // Keep the previous completed sentence as context for the translator.
+        // MlKitTranslator currently accepts the combined context explicitly through text.
         final String translationInput = lastSourceSentence == null || lastSourceSentence.trim().isEmpty()
                 ? fullText.trim()
                 : lastSourceSentence.trim() + "\n" + fullText.trim();
@@ -201,6 +207,7 @@ public class MainPipeline {
                     if (!displayText.isEmpty() && subtitlesServiceReady) {
                         SubtitleOverlayService.updateText(displayText);
                     }
+                    Log.d(TAG, "Translation result received; display='" + displayText + "'");
                     if (listener != null) listener.onTransltionUpdate(fullTranslated);
                 }
 
@@ -239,20 +246,40 @@ public class MainPipeline {
         return text.substring(cutIndex).trim();
     }
 
-    public void setParmeters() {
+    /**
+     * Applies the current SharedPreferences language configuration.
+     * Returns true when it initiated a translator reconfiguration.
+     */
+    public boolean setParmeters() {
         if (!started.get()) {
             Log.i(TAG, "pipeline not working (running) yet there is no need to do it now...");
-            return;
+            return false;
         }
         SharedPreferences prefs = cxt.getSharedPreferences("subrima_prefs", Context.MODE_PRIVATE);
-        sourceLang = prefs.getString("pref_source_lang", "auto");
-        String selectedSubtitleLang = prefs.getString("pref_subtitle_lang", "en");
-        boolean sourceChanged = !sourceLang.equals("auto") && !sourceLang.equals(srcLang);
-        boolean targetChanged = !subtitleLang.equals(selectedSubtitleLang);
-        if (!sourceChanged && targetChanged) {
-            if (!setLanguage(selectedSubtitleLang)) notifyError("problem changing translation languages...");
+        String selectedSource = prefs.getString("pref_source_lang", "auto");
+        String selectedTarget = prefs.getString("pref_subtitle_lang", "en");
+
+        boolean sourceChanged = false;
+        if (!"auto".equals(selectedSource) && !selectedSource.equals(srcLang)) {
+            srcLang = selectedSource;
+            sourceChanged = true;
         }
+        sourceLang = selectedSource;
+        boolean targetChanged = !subtitleLang.equals(selectedTarget);
+
+        boolean translatorReconfigured = false;
+        if ((sourceChanged || targetChanged) && translator != null) {
+            translatorReconfigured = setLanguage(selectedTarget);
+            if (!translatorReconfigured) {
+                notifyError("Unable to initialize translation " + srcLang + " -> " + selectedTarget);
+            }
+        }
+        if (translatorReconfigured) {
+            translatorNeedsResume = false;
+        }
+
         transcriber.setParmeters();
+        return translatorReconfigured;
     }
 
     public void setListener(Listener l) {
@@ -270,15 +297,19 @@ public class MainPipeline {
             return false;
         }
         started.set(true);
+        boolean translatorReconfigured = false;
         try {
-            setParmeters();
+            translatorReconfigured = setParmeters();
             boolean transcriberStarted = transcriber.start();
             if (!transcriberStarted) {
                 started.set(false);
-                Log.w(TAG, "Audio capture failed to start; pipeline state reset");
+                Log.w(TAG, "Audio/transcription pipeline failed to start");
                 return false;
             }
-            if (translator != null) {
+
+            // Do not resume on the first start: the constructor already initialized ML Kit.
+            // On subsequent starts, resume only if preferences did not already trigger a rebuild.
+            if (translator != null && translatorNeedsResume && !translatorReconfigured) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
                     @Override public void onReady() {
                         Log.i(TAG, "Translator models are ready after resume");
@@ -289,12 +320,14 @@ public class MainPipeline {
                         notifyError(e.getMessage());
                     }
                 });
+                translatorNeedsResume = false;
             }
+
             Intent overlayIntent = new Intent(cxt, SubtitleOverlayService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) cxt.startForegroundService(overlayIntent);
             else cxt.startService(overlayIntent);
-            SubtitleOverlayService.showOverlay();
             subtitlesServiceReady = true;
+            SubtitleOverlayService.showOverlay();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Pipeline start failed", e);
@@ -319,6 +352,7 @@ public class MainPipeline {
         subtitlesServiceReady = false;
         transcriber.stop();
         if (translator != null) translator.pause();
+        translatorNeedsResume = true;
         if (srcLang.isEmpty()) srcLang = "en";
         started.set(false);
     }
@@ -349,9 +383,14 @@ public class MainPipeline {
                     subtitleLang = newDstLang;
                     Log.i(TAG, "Successfully switched target language to: " + newDstLang);
                 } else {
+                    // setLanguages() returns false when the pair is already configured.
+                    // Treat that as success when the requested pair already matches.
+                    if (srcLang.equals(newDstLang) && subtitleLang.equals(newDstLang)) {
+                        return true;
+                    }
                     Log.w(TAG, "Failed to switch target language to: " + newDstLang);
                 }
-                return success;
+                return success || (srcLang.equals(newDstLang) && subtitleLang.equals(newDstLang));
             }
             Log.w(TAG, "Translator instance is null – cannot switch language");
             return false;
