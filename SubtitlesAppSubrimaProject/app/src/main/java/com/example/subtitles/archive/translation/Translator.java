@@ -16,7 +16,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.FloatBuffer;
 import java.nio.LongBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -82,7 +81,12 @@ public class Translator implements AutoCloseable {
             for (int i = 0; i < tokens.length(); i++) {
                 String token = tokens.getString(i);
                 String lang = token.replace("__", "");
-                langTokenToId.put(lang, spm.pieceToId(token));
+                int tokenId = spm.pieceToId(token);
+                if (tokenId != unkId) {
+                    langTokenToId.put(lang, tokenId);
+                } else {
+                    Log.w(TAG, "Ignoring invalid language token: " + token);
+                }
             }
         }
         Log.d(TAG, "Supported languages: " + langTokenToId.keySet());
@@ -111,6 +115,9 @@ public class Translator implements AutoCloseable {
     }
 
     private int requireLanguageToken(String language) {
+        if (language == null || language.trim().isEmpty()) {
+            throw new IllegalArgumentException("Language must not be empty");
+        }
         Integer tokenId = langTokenToId.get(language);
         if (tokenId == null || tokenId == unkId) {
             throw new IllegalArgumentException("Unsupported language: " + language);
@@ -145,6 +152,7 @@ public class Translator implements AutoCloseable {
 
     public synchronized String translate(String text) throws OrtException {
         ensureOpen();
+        if (text == null) throw new IllegalArgumentException("Text must not be null");
         if (!isTranslating.compareAndSet(false, true))
             throw new IllegalStateException("Already translating");
         stopRequested.set(false);
@@ -152,9 +160,7 @@ public class Translator implements AutoCloseable {
         OnnxTensor encTensor = null;
         OnnxTensor encMask = null;
         OrtSession.Result encOut = null;
-        OnnxTensor encHidden = null;
         try {
-            // 1) tokenize + build encoder input
             int[] srcIds = spm.encodeAsIds(text);
             long[] encInput = new long[srcIds.length + 3];
             encInput[0] = bosId;
@@ -167,19 +173,17 @@ public class Translator implements AutoCloseable {
                     new long[]{1, encInput.length});
             encMask = createAttentionMask(encInput.length);
 
-            // 2) run encoder; keep the Result open because it owns encHidden.
+            // Keep the encoder Result open because it owns the output tensor used by decoding.
             encOut = encoderSession.run(Map.of(
                     "input_ids", encTensor,
                     "attention_mask", encMask));
-            encHidden = (OnnxTensor) encOut.get(0);
+            OnnxTensor encHidden = (OnnxTensor) encOut.get(0);
 
-            // Encoder inputs are no longer needed after encoderSession.run().
             encTensor.close();
             encTensor = null;
             encMask.close();
             encMask = null;
 
-            // 3) greedy decode WITHOUT cache
             StringBuilder sb = new StringBuilder();
             int[] decInputIds = new int[]{bosId, tgtLangTokenId};
             for (int step = 0; step < MAX_OUTPUT_LENGTH && !stopRequested.get(); step++) {
