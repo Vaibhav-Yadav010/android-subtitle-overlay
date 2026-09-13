@@ -42,6 +42,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MainPipeline {
     public static final int MAX_SUBTITLES_WORDS = 10;
     private static final String TAG = "MainPipeline";
+    private static final long TRANSLATION_RETRY_DELAY_MS = 500L;
+    private static final int MAX_TRANSLATION_RETRIES = 120;
     private final transcriptManager transcriber;
     private final MlKitTranslator translator;
     private final StringBuilder transcript = new StringBuilder();
@@ -55,6 +57,23 @@ public class MainPipeline {
     private String srcLang = "en";
     private String subtitleLang = "en";
     private boolean subtitlesServiceReady = false;
+
+    private String pendingTranslationSentence = "";
+    private String pendingTranslationText = "";
+    private String pendingTranslationRaw = "";
+    private int translationRetryCount = 0;
+
+    private final Runnable translationRetryRunnable = () -> {
+        if (!started.get() || translator == null || pendingTranslationText.isEmpty()) return;
+        if (translator.isReady()) {
+            translatePendingText();
+        } else if (translationRetryCount < MAX_TRANSLATION_RETRIES) {
+            translationRetryCount++;
+            handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
+        } else {
+            translationRetryCount = 0;
+        }
+    };
 
     private final Runnable resetRunnable = () -> {
         Log.d(TAG, "Resetting subtitles due to timeout");
@@ -107,40 +126,21 @@ public class MainPipeline {
                 }
 
                 if (fullText.isEmpty()) {
+                    pendingTranslationSentence = "";
+                    pendingTranslationText = "";
+                    pendingTranslationRaw = "";
                     if (subtitlesServiceReady) SubtitleOverlayService.updateText("");
                 } else if (translator != null && !srcLang.equals(subtitleLang)) {
-                    if (!translator.isReady()) {
-                        if (listener != null) listener.onTransltionUpdate("Loading translation…");
-                        // Raw transcription remains visible above.
+                    pendingTranslationSentence = lastSourceSentence;
+                    pendingTranslationText = fullText;
+                    pendingTranslationRaw = rawDisplayText;
+                    translationRetryCount = 0;
+                    handler.removeCallbacks(translationRetryRunnable);
+                    if (translator.isReady()) {
+                        translatePendingText();
                     } else {
-                        try {
-                            translator.translate(lastSourceSentence, fullText, new MlKitTranslator.TranslationCallback() {
-                                @Override
-                                public void onResult(String fullTranslated, String translated) {
-                                    String displayText = translated == null || translated.isEmpty()
-                                            ? rawDisplayText
-                                            : trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
-                                    if (!displayText.isEmpty() && subtitlesServiceReady) {
-                                        SubtitleOverlayService.updateText(displayText);
-                                    }
-                                    if (listener != null) listener.onTransltionUpdate(fullTranslated);
-                                }
-
-                                @Override
-                                public void onError(MlKitTranslator.TranslationException e) {
-                                    Log.e(TAG, "Translation error", e);
-                                    if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
-                                        SubtitleOverlayService.updateText(rawDisplayText);
-                                    }
-                                    if (listener != null) listener.onTransltionUpdate("Translation failed; showing source text");
-                                }
-                            });
-                        } catch (Exception e) {
-                            Log.e(TAG, "Translator translate failed", e);
-                            if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
-                                SubtitleOverlayService.updateText(rawDisplayText);
-                            }
-                        }
+                        if (listener != null) listener.onTransltionUpdate("Loading translation…");
+                        handler.postDelayed(translationRetryRunnable, TRANSLATION_RETRY_DELAY_MS);
                     }
                 } else {
                     Log.d(TAG, "NO Translated - Just Transcript: " + rawDisplayText);
@@ -180,6 +180,48 @@ public class MainPipeline {
                 if (listener != null) listener.onLanguageDetected("Language: " + lang + " : " + lang + "(V)");
             }
         });
+    }
+
+    private void translatePendingText() {
+        if (!started.get() || translator == null || pendingTranslationText.isEmpty() || !translator.isReady()) return;
+
+        final String lastSourceSentence = pendingTranslationSentence;
+        final String fullText = pendingTranslationText;
+        final String rawDisplayText = pendingTranslationRaw;
+        pendingTranslationSentence = "";
+        pendingTranslationText = "";
+        pendingTranslationRaw = "";
+        handler.removeCallbacks(translationRetryRunnable);
+        translationRetryCount = 0;
+
+        try {
+            translator.translate(lastSourceSentence, fullText, new MlKitTranslator.TranslationCallback() {
+                @Override
+                public void onResult(String fullTranslated, String translated) {
+                    String displayText = translated == null || translated.isEmpty()
+                            ? rawDisplayText
+                            : trimToLastNUnits(translated, subtitleLang, MAX_SUBTITLES_WORDS);
+                    if (!displayText.isEmpty() && subtitlesServiceReady) {
+                        SubtitleOverlayService.updateText(displayText);
+                    }
+                    if (listener != null) listener.onTransltionUpdate(fullTranslated);
+                }
+
+                @Override
+                public void onError(MlKitTranslator.TranslationException e) {
+                    Log.e(TAG, "Translation error", e);
+                    if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                        SubtitleOverlayService.updateText(rawDisplayText);
+                    }
+                    if (listener != null) listener.onTransltionUpdate("Translation failed; showing source text");
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Translator translate failed", e);
+            if (!rawDisplayText.isEmpty() && subtitlesServiceReady) {
+                SubtitleOverlayService.updateText(rawDisplayText);
+            }
+        }
     }
 
     private String trimToLastNUnits(String text, String langTag, int maxUnits) {
@@ -241,8 +283,14 @@ public class MainPipeline {
             }
             if (translator != null) {
                 translator.resume(new MlKitTranslator.ReadyListener() {
-                    @Override public void onReady() { Log.i(TAG, "Translator models are ready after resume"); }
-                    @Override public void onError(Exception e) { Log.e(TAG, "Translator failed to resume", e); notifyError(e.getMessage()); }
+                    @Override public void onReady() {
+                        Log.i(TAG, "Translator models are ready after resume");
+                        translatePendingText();
+                    }
+                    @Override public void onError(Exception e) {
+                        Log.e(TAG, "Translator failed to resume", e);
+                        notifyError(e.getMessage());
+                    }
                 });
             }
             Intent overlayIntent = new Intent(cxt, SubtitleOverlayService.class);
@@ -257,6 +305,7 @@ public class MainPipeline {
             started.set(false);
             subtitlesServiceReady = false;
             handler.removeCallbacks(resetRunnable);
+            handler.removeCallbacks(translationRetryRunnable);
             return false;
         }
     }
@@ -264,6 +313,11 @@ public class MainPipeline {
     public synchronized void stop() {
         if (!started.get()) return;
         handler.removeCallbacks(resetRunnable);
+        handler.removeCallbacks(translationRetryRunnable);
+        pendingTranslationSentence = "";
+        pendingTranslationText = "";
+        pendingTranslationRaw = "";
+        translationRetryCount = 0;
         SubtitleOverlayService.hideOverlay();
         subtitlesServiceReady = false;
         transcriber.stop();
