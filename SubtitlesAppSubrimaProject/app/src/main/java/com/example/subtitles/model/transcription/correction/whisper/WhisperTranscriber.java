@@ -40,6 +40,8 @@ public class WhisperTranscriber {
     private final int overlapSamples = OVERLAP_SEC * SAMPLE_RATE;
     private final float[] buffer = new float[CHUNK_SAMPLES];
     private int bufferLen = 0;
+    private int consecutiveTranscriptionFailures = 0;
+    private static final int MAX_TRANSCRIPTION_RETRIES = 2;
 
     // Bound queued audio so a stalled native transcription cannot grow memory without limit.
     private static final int MAX_QUEUED_CHUNKS = 8;
@@ -107,9 +109,11 @@ public class WhisperTranscriber {
 
                 if (bufferLen >= chunkSamples) {
                     Log.d(TAG, "🟦 bufferLen = " + bufferLen + " / " + chunkSamples);
-                    doTranscribe(chunkSamples);
-                    System.arraycopy(buffer, chunkSamples - overlapSamples, buffer, 0, overlapSamples);
-                    bufferLen = overlapSamples;
+                    if (doTranscribe(chunkSamples)) {
+                        System.arraycopy(buffer, chunkSamples - overlapSamples, buffer, 0, overlapSamples);
+                        bufferLen = overlapSamples;
+                        consecutiveTranscriptionFailures = 0;
+                    }
                 }
             }
         } catch (InterruptedException e) {
@@ -117,9 +121,12 @@ public class WhisperTranscriber {
         }
     }
 
-    private void doTranscribe(int len) {
+    private boolean doTranscribe(int len) {
         WhisperContext context = ctx;
-        if (context == null) return;
+        if (context == null) {
+            notifyError(new IllegalStateException("WhisperContext is unavailable"));
+            return false;
+        }
         float[] toTranscribe = Arrays.copyOf(buffer, len);
         try {
             long start = System.currentTimeMillis();
@@ -134,20 +141,25 @@ public class WhisperTranscriber {
                 resetAll();
             }
             if (!segs.isEmpty()) notifyListener(segs, duration / 1000L > CHUNK_SEC);
+            return true;
         } catch (Exception e) {
-            Log.e(TAG, " Error during transcription", e);
+            consecutiveTranscriptionFailures++;
+            Log.e(TAG, " Error during transcription (attempt " + consecutiveTranscriptionFailures + "/"
+                    + MAX_TRANSCRIPTION_RETRIES + ")", e);
+            notifyError(e);
+            if (consecutiveTranscriptionFailures >= MAX_TRANSCRIPTION_RETRIES) {
+                Log.e(TAG, "Dropping failed Whisper window after bounded retries");
+                bufferLen = 0;
+                consecutiveTranscriptionFailures = 0;
+            }
+            return false;
         }
-
-        int remaining = bufferLen - len;
-        if (remaining > 0) {
-            System.arraycopy(buffer, len, buffer, 0, remaining);
-        }
-        bufferLen = Math.max(0, remaining);
     }
 
     private void resetAll() {
         audioQueue.clear();
         bufferLen = 0;
+        consecutiveTranscriptionFailures = 0;
         lang = "";
         counterProcessing = 0;
         sumProcessingTime = 0;
